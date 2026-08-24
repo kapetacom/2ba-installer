@@ -1,0 +1,37 @@
+# GoReleaser config for the 2ba installer.
+#
+# Asset names are deliberately version-stable ({{ .ProjectName }}_{{ .Os }}_{{ .Arch }})
+# so the thin bootstrap in the private 2ba repo can always fetch the current
+# build from https://github.com/kapetacom/2ba-installer/releases/latest/download/.
+version: 2
+
+project_name: 2ba-installer
+
+builds:
+  - id: 2ba-installer
+    main: ./cmd/2ba-installer
+    binary: 2ba-installer
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Version}}
+
+archives:
+  - id: 2ba-installer
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256

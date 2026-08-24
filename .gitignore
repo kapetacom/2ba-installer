@@ -1,0 +1,6 @@
+# GoReleaser output
+dist/
+
+# locally built binaries
+/2ba-installer
+/2ba-installer-*
