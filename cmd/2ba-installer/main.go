@@ -20,6 +20,7 @@ import (
 	"github.com/kapetacom/2ba-installer/internal/menu"
 	"github.com/kapetacom/2ba-installer/internal/pairing"
 	"github.com/kapetacom/2ba-installer/internal/termx"
+	"github.com/kapetacom/2ba-installer/internal/ui"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=vX.Y.Z".
@@ -72,7 +73,7 @@ func main() {
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "print the plan without touching anything")
 	fs.BoolVar(&opts.uninstall, "uninstall", false, "remove everything the installer manages")
 	fs.BoolVar(&opts.yes, "yes", false, "non-interactive: accept all defaults")
-	fs.StringVar(&opts.services, "services", "", "services to configure: shell,opencode,windsurf,kimi,continue,cursor")
+	fs.StringVar(&opts.services, "services", "", "services to configure: shell,opencode,windsurf,kimi,continue,cursor,zcode")
 	fs.StringVar(&opts.model, "model", defaultModel, "model to configure")
 	fs.StringVar(&opts.apiBase, "api-base", defaultBase, "API base URL override")
 	fs.StringVar(&opts.apiOrigin, "api-origin", "", "pairing/website origin override, e.g. http://localhost:8080")
@@ -147,13 +148,8 @@ func main() {
 	default:
 		sel = fromDetect()
 	}
-	if what := summary(sel); what != "" {
-		logf("configuring: %s", what)
-	} else {
-		warnf("no services selected — only the API key will be stored")
-	}
-
-	fmt.Printf("  base URL: %s    model: %s\n\n", opts.apiBase, opts.model)
+	fmt.Print(ui.Summary(summary(sel), opts.model, opts.apiBase))
+	fmt.Println()
 
 	// Acquire the key.
 	var apiKey string
@@ -230,14 +226,18 @@ func main() {
 	if sel.Cursor {
 		configure.InstructCursor(env)
 	}
+	if sel.Zcode {
+		configure.ConfigureZcode(env)
+	}
 
 	fmt.Println()
 	if opts.dryRun {
-		logf("dry run complete — re-run without --dry-run to apply")
+		fmt.Print(ui.DryRun())
 	} else {
-		logf("done. key: %s   model: %s", fingerprint(apiKey), opts.model)
-		logf("manage keys at %s/api-keys", apiOrigin)
+		fmt.Print(ui.Done(fingerprint(apiKey), opts.model, apiOrigin+"/api-keys"))
 	}
+	// lipgloss.Render does not append a trailing newline — terminate the
+	// bottom border so the shell prompt starts on its own line.
 	fmt.Println()
 }
 
@@ -251,7 +251,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --dry-run        print the plan without touching anything")
 	fmt.Fprintln(os.Stderr, "  --uninstall      remove everything this binary manages")
 	fmt.Fprintln(os.Stderr, "  --services LIST  services to configure: shell,opencode,windsurf,kimi,")
-	fmt.Fprintln(os.Stderr, "                   continue,cursor (default: all detected)")
+	fmt.Fprintln(os.Stderr, "                   continue,cursor,zcode (default: all detected)")
 	fmt.Fprintf(os.Stderr, "  --model NAME     model to configure (default: %s)\n", defaultModel)
 	fmt.Fprintf(os.Stderr, "  --api-base URL   API base URL override (default: %s)\n", defaultBase)
 	fmt.Fprintln(os.Stderr, "  --api-origin URL pairing/website origin override, e.g. http://localhost:8080")
@@ -262,10 +262,10 @@ func usage() {
 }
 
 // logf/warnf/die mirror the old install.sh's coloured output.
-func logf(format string, a ...any)  { fmt.Printf("  \033[32m*\033[0m "+format+"\n", a...) }
-func warnf(format string, a ...any) { fmt.Printf("  \033[33m!\033[0m "+format+"\n", a...) }
+func logf(format string, a ...any)  { fmt.Println(ui.Log(fmt.Sprintf(format, a...))) }
+func warnf(format string, a ...any) { fmt.Println(ui.Warn(fmt.Sprintf(format, a...))) }
 func die(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "\033[31merror:\033[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, "\033[1;31m✗ error:\033[0m "+format+"\n", a...)
 	os.Exit(1)
 }
 
@@ -319,9 +319,9 @@ func parseServices(s string) ([]string, error) {
 			name = "shell"
 		}
 		switch name {
-		case "shell", "opencode", "windsurf", "kimi", "continue", "cursor":
+		case "shell", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode":
 		default:
-			return nil, fmt.Errorf("unknown service '%s' — valid: shell,opencode,windsurf,kimi,continue,cursor", tok)
+			return nil, fmt.Errorf("unknown service '%s' — valid: shell,opencode,windsurf,kimi,continue,cursor,zcode", tok)
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -347,6 +347,8 @@ func fromServiceList(names []string) menu.Selections {
 			s.Continue = true
 		case "cursor":
 			s.Cursor = true
+		case "zcode":
+			s.Zcode = true
 		}
 	}
 	return s
@@ -357,6 +359,7 @@ func fromDetect() menu.Selections {
 	return menu.Selections{
 		Shell: d.Shell, Opencode: d.Opencode, Windsurf: d.Windsurf,
 		Kimi: d.Kimi, Continue: d.Continue, Cursor: d.Cursor,
+		Zcode: d.Zcode,
 	}
 }
 
@@ -380,6 +383,9 @@ func summary(s menu.Selections) string {
 	}
 	if s.Cursor {
 		parts = append(parts, "cursor")
+	}
+	if s.Zcode {
+		parts = append(parts, "zcode")
 	}
 	return strings.Join(parts, ", ")
 }

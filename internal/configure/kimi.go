@@ -84,7 +84,7 @@ func (e *Env) configureKimiOne(dir, providerType string) {
 	}
 	_ = os.Chmod(cfg, 0o600)
 	e.logf("Kimi: provider \"2ba\" + model 2ba-%s added to %s", mk, cfg)
-	e.logf("  use it with: kimi -m 2ba-%s   (or switch with /model inside Kimi)", mk)
+	e.hintf("use it with: kimi -m 2ba-%s   (or switch with /model inside Kimi)", mk)
 }
 
 // ConfigureKimi configures both Kimi locations: ~/.kimi (original kimi-cli,

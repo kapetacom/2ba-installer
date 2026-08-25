@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/kapetacom/2ba-installer/internal/ui"
 )
 
 // BlockBegin/BlockEnd delimit the installer-managed block inside shell rc and
@@ -44,8 +46,9 @@ func NewEnv(model, apiBase, apiOrigin, apiKey, keyFile string, dryRun bool) *Env
 	}
 }
 
-func (e *Env) logf(format string, a ...any)  { fmt.Fprintf(e.Out, "  * "+format+"\n", a...) }
-func (e *Env) warnf(format string, a ...any) { fmt.Fprintf(e.Out, "  ! "+format+"\n", a...) }
+func (e *Env) logf(format string, a ...any)  { fmt.Fprintln(e.Out, ui.Log(fmt.Sprintf(format, a...))) }
+func (e *Env) warnf(format string, a ...any) { fmt.Fprintln(e.Out, ui.Warn(fmt.Sprintf(format, a...))) }
+func (e *Env) hintf(format string, a ...any) { fmt.Fprintln(e.Out, ui.Hint(fmt.Sprintf(format, a...))) }
 
 func dirExists(p string) bool {
 	st, err := os.Stat(p)

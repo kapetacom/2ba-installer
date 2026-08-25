@@ -54,10 +54,11 @@ func Uninstall(e *Env) {
 		}
 	}
 
-	// agent JSON configs (opencode + windsurf)
+	// agent JSON configs (opencode + windsurf + zcode)
 	for _, cfg := range []string{
 		filepath.Join(xdgConfig(), "opencode", "opencode.json"),
 		filepath.Join(home(), ".codeium", "windsurf", "model_config.json"),
+		filepath.Join(zcodeHome(), "v2", "config.json"),
 	} {
 		if !fileExists(cfg) {
 			continue

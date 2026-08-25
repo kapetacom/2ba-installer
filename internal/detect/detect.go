@@ -18,6 +18,7 @@ type Services struct {
 	Kimi     bool
 	Continue bool
 	Cursor   bool
+	Zcode    bool
 
 	// ShellRC is the first existing shell rc file ("" if none).
 	ShellRC string
@@ -46,6 +47,13 @@ func kimiCodeHome() string {
 		return v
 	}
 	return filepath.Join(home(), ".kimi-code")
+}
+
+func zcodeHome() string {
+	if v := os.Getenv("ZCODE_HOME"); v != "" {
+		return v
+	}
+	return filepath.Join(home(), ".zcode")
 }
 
 func dirExists(path string) bool {
@@ -90,6 +98,7 @@ func Detect() Services {
 		onPath("kimi")
 	s.Continue = dirExists(filepath.Join(h, ".continue"))
 	s.Cursor = dirExists(filepath.Join(h, ".cursor")) || onPath("cursor")
+	s.Zcode = dirExists(zcodeHome()) || onPath("zcode")
 
 	return s
 }
@@ -109,6 +118,8 @@ func (s Services) Has(name string) bool {
 		return s.Continue
 	case "cursor":
 		return s.Cursor
+	case "zcode":
+		return s.Zcode
 	}
 	return false
 }
