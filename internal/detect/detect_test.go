@@ -18,9 +18,10 @@ func TestDetectDirs(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(home, ".kimi"), 0o755)
 	_ = os.MkdirAll(filepath.Join(home, ".continue"), 0o755)
 	_ = os.MkdirAll(filepath.Join(home, ".cursor"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".zcode"), 0o755)
 
 	s := Detect()
-	if !s.Shell || !s.Opencode || !s.Windsurf || !s.Kimi || !s.Continue || !s.Cursor {
+	if !s.Shell || !s.Opencode || !s.Windsurf || !s.Kimi || !s.Continue || !s.Cursor || !s.Zcode {
 		t.Errorf("expected all services detected, got %+v", s)
 	}
 	if s.ShellRC != filepath.Join(home, ".zshrc") {
@@ -44,8 +45,8 @@ func TestFirstShellRCPriority(t *testing.T) {
 }
 
 func TestHas(t *testing.T) {
-	s := Services{Shell: true, Kimi: true}
-	if !s.Has("shell") || !s.Has("kimi") {
+	s := Services{Shell: true, Kimi: true, Zcode: true}
+	if !s.Has("shell") || !s.Has("kimi") || !s.Has("zcode") {
 		t.Error("Has should report present services")
 	}
 	if s.Has("cursor") || s.Has("bogus") {

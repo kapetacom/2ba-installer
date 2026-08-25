@@ -39,6 +39,7 @@ func newEnv(t *testing.T, home, model, key string, dryRun bool) (*Env, *bytes.Bu
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(home, ".kimi-code"))
+	t.Setenv("ZCODE_HOME", filepath.Join(home, ".zcode"))
 	var buf bytes.Buffer
 	env := NewEnv(model, testBase, testOrigin, key, filepath.Join(home, ".config", "2ba", "2BA_API_KEY"), dryRun)
 	env.Out = &buf
@@ -281,6 +282,112 @@ func TestKimiJSONMigrationWarning(t *testing.T) {
 	}
 }
 
+// -------------------------------------------------------------------------- zcode
+
+func TestZcodeAddKeepsUserProvider(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	mustWrite(t, zcfg, `{"provider": {"builtin:zai": {"name": "keep me"}}}`)
+	env, _ := newEnv(t, home, "amber", "tuba-sk-zcode-key", false)
+
+	ConfigureZcode(env)
+
+	var cfg map[string]any
+	zc, _ := os.ReadFile(zcfg)
+	if err := json.Unmarshal(zc, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	providers := cfg["provider"].(map[string]any)
+	if _, present := providers["builtin:zai"]; !present {
+		t.Errorf("user provider lost:\n%s", zc)
+	}
+	p, ok := providers["2ba"].(map[string]any)
+	if !ok {
+		t.Fatalf("2ba provider missing:\n%s", zc)
+	}
+	if p["kind"] != "openai-compatible" || p["enabled"] != true || p["source"] != "custom" {
+		t.Errorf("2ba provider shape wrong:\n%s", zc)
+	}
+	opts, _ := p["options"].(map[string]any)
+	if opts["apiKey"] != "tuba-sk-zcode-key" || opts["baseURL"] != testBase {
+		t.Errorf("2ba options wrong:\n%s", zc)
+	}
+	models, _ := p["models"].(map[string]any)
+	if _, present := models["amber"]; !present {
+		t.Errorf("model amber missing:\n%s", zc)
+	}
+	if st, _ := os.Stat(zcfg); st.Mode().Perm() != 0o600 {
+		t.Errorf("zcode config perms = %v, want 0600", st.Mode().Perm())
+	}
+}
+
+func TestZcodeExisting2baUntouched(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	existing := `{"provider": {"2ba": {"name": "USER-OWNED", "options": {"apiKey": "user-secret"}}}}`
+	mustWrite(t, zcfg, existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureZcode(env)
+
+	if got, _ := os.ReadFile(zcfg); string(got) != existing {
+		t.Errorf("existing 2ba provider was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "leaving it as-is") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+func TestZcodeNoHomeDir(t *testing.T) {
+	home := t.TempDir()
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureZcode(env)
+	if !strings.Contains(buf.String(), "ZCode not detected") || !strings.Contains(buf.String(), "install it, run it once") {
+		t.Errorf("expected not-detected warning:\n%s", buf.String())
+	}
+}
+
+func TestZcodeNoV2Dir(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".zcode"))
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureZcode(env)
+	if !strings.Contains(buf.String(), "no v2 config yet") {
+		t.Errorf("expected v2-missing warning:\n%s", buf.String())
+	}
+}
+
+func TestZcodeMalformedJSON(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	broken := "{not json"
+	mustWrite(t, zcfg, broken)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureZcode(env)
+
+	if got, _ := os.ReadFile(zcfg); string(got) != broken {
+		t.Errorf("malformed config was rewritten:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "not valid JSON") {
+		t.Errorf("expected malformed-JSON warning:\n%s", buf.String())
+	}
+}
+
+func TestZcodeDryRun(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	mustWrite(t, zcfg, `{}`)
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureZcode(env)
+	if !strings.Contains(buf.String(), "would add 2ba provider to") {
+		t.Errorf("dry-run plan missing zcode entry:\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(zcfg); string(got) != `{}` {
+		t.Errorf("dry run modified the zcode config:\n%s", got)
+	}
+}
+
 // ---------------------------------------------------------------------- uninstall
 
 func TestUninstallShellBlock(t *testing.T) {
@@ -338,6 +445,30 @@ func TestUninstallOpencode(t *testing.T) {
 	}
 	if _, present := cfg["model"]; present {
 		t.Errorf("default model not removed:\n%s", oc)
+	}
+	if !strings.Contains(buf.String(), "removed 2ba entry") {
+		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+func TestUninstallZcode(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	mustWrite(t, zcfg, `{"provider": {"2ba": {"name": "2ba.ai"}, "builtin:zai": {"name": "keep"}}}`)
+	env, buf := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	var cfg map[string]any
+	zc, _ := os.ReadFile(zcfg)
+	if err := json.Unmarshal(zc, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	providers := cfg["provider"].(map[string]any)
+	if _, present := providers["2ba"]; present {
+		t.Errorf("2ba provider not removed:\n%s", zc)
+	}
+	if _, present := providers["builtin:zai"]; !present {
+		t.Errorf("user provider was removed:\n%s", zc)
 	}
 	if !strings.Contains(buf.String(), "removed 2ba entry") {
 		t.Errorf("expected removal notice:\n%s", buf.String())

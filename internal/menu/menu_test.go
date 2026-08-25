@@ -36,6 +36,10 @@ func TestToggleByNumber(t *testing.T) {
 	if m.sel[0] {
 		t.Error("1 should toggle shell off")
 	}
+	m = update(m, keyRunes("7")) // zcode on
+	if !m.sel[6] {
+		t.Error("7 should toggle zcode on")
+	}
 }
 
 func TestArrowsAndSpace(t *testing.T) {

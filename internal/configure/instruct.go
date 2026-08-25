@@ -1,7 +1,6 @@
 package configure
 
 import (
-	"fmt"
 	"path/filepath"
 )
 
@@ -12,8 +11,8 @@ func InstructContinue(e *Env) {
 		return
 	}
 	e.warnf("Continue detected — add this model block to ~/.continue/config.json:")
-	fmt.Fprintf(e.Out, "    {\"title\": \"2ba.ai\", \"provider\": \"openai\", \"model\": \"%s\",\n", e.Model)
-	fmt.Fprintf(e.Out, "     \"apiKey\": \"<your key from %s/api-keys>\", \"apiBase\": \"%s\"}\n", e.APIOrigin, e.APIBase)
+	e.hintf("{\"title\": \"2ba.ai\", \"provider\": \"openai\", \"model\": \"%s\",", e.Model)
+	e.hintf(" \"apiKey\": \"<your key from %s/api-keys>\", \"apiBase\": \"%s\"}", e.APIOrigin, e.APIBase)
 }
 
 // InstructCursor prints manual steps for Cursor (configured through the UI).
@@ -22,6 +21,6 @@ func InstructCursor(e *Env) {
 		return
 	}
 	e.warnf("Cursor detected — configure via UI: Settings → Models →")
-	e.warnf("  OpenAI API Key: <your key from %s/api-keys>", e.APIOrigin)
-	e.warnf("  Override base URL: %s   Model: %s", e.APIBase, e.Model)
+	e.hintf("OpenAI API Key: <your key from %s/api-keys>", e.APIOrigin)
+	e.hintf("Override base URL: %s   Model: %s", e.APIBase, e.Model)
 }

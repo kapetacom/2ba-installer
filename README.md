@@ -25,6 +25,7 @@ working even when run through a pipe.
 | kimi     | adds a `2ba` provider + model to Kimi's `config.toml` (both `~/.kimi` and `~/.kimi-code`) |
 | continue | prints manual steps for `~/.continue` |
 | cursor   | prints manual steps for the Cursor UI |
+| zcode    | adds a `2ba` OpenAI-compatible provider to ZCode's `~/.zcode/v2/config.json` |
 
 The API key is always stored at `~/.config/2ba/2BA_API_KEY` (mode `0600`).
 
@@ -33,7 +34,7 @@ The API key is always stored at `~/.config/2ba/2BA_API_KEY` (mode `0600`).
 ```
 --dry-run        print the plan without touching anything
 --uninstall      remove everything this binary manages
---services LIST  services to configure: shell,opencode,windsurf,kimi,continue,cursor
+--services LIST  services to configure: shell,opencode,windsurf,kimi,continue,cursor,zcode
 --model NAME     model to configure (default: amber)
 --api-base URL   API base URL override (default: https://api.2ba.ai/v1)
 --api-origin URL pairing/website origin override, e.g. http://localhost:8080
