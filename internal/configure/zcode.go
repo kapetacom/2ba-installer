@@ -40,7 +40,7 @@ func ConfigureZcode(e *Env) {
 	e.backup(cfg)
 	if e.DryRun {
 		if fileExists(cfg) && hasProvider2ba(cfg) {
-			e.logf("would update the 2ba provider in %s", cfg)
+			e.logf("would leave the existing \"2ba\" provider in %s as-is", cfg)
 		} else {
 			e.logf("would add 2ba provider to %s", cfg)
 		}

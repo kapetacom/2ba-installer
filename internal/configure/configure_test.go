@@ -388,6 +388,21 @@ func TestZcodeDryRun(t *testing.T) {
 	}
 }
 
+func TestZcodeDryRunExisting(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	existing := `{"provider": {"2ba": {"name": "2ba"}}}`
+	mustWrite(t, zcfg, existing)
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureZcode(env)
+	if !strings.Contains(buf.String(), "would leave the existing") {
+		t.Errorf("dry run must match the real path (leave existing provider as-is):\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(zcfg); string(got) != existing {
+		t.Errorf("dry run modified the zcode config:\n%s", got)
+	}
+}
+
 // ---------------------------------------------------------------------- uninstall
 
 func TestUninstallShellBlock(t *testing.T) {

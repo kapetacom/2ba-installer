@@ -236,6 +236,9 @@ func main() {
 	} else {
 		fmt.Print(ui.Done(fingerprint(apiKey), opts.model, apiOrigin+"/api-keys"))
 	}
+	// lipgloss.Render does not append a trailing newline — terminate the
+	// bottom border so the shell prompt starts on its own line.
+	fmt.Println()
 }
 
 func usage() {

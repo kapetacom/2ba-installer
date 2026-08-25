@@ -21,12 +21,14 @@ var (
 	link    = lipgloss.NewStyle().Foreground(cyanC)
 )
 
-// padH is the horizontal padding inside the panel border.
-const padH = 1
+// hpad is the total horizontal padding inside the panel border (1 cell on
+// each side); Padding(1) applies 1 cell to all four sides.
+const hpad = 2
 
 // panel renders lines inside a rounded box with a coloured border. Width is
 // measured with lipgloss.Width so styling never skews the alignment; the box
-// width must cover the widest line plus the padding, or lipgloss wraps it.
+// width must cover the widest line plus the horizontal padding, or lipgloss
+// wraps it.
 func panel(border lipgloss.Color, lines ...string) string {
 	width := 0
 	for _, l := range lines {
@@ -37,8 +39,8 @@ func panel(border lipgloss.Color, lines ...string) string {
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border).
-		Padding(padH, 1, padH, 1).
-		Width(width + 2*padH)
+		Padding(1).
+		Width(width + hpad)
 	return box.Render(strings.Join(lines, "\n"))
 }
 
