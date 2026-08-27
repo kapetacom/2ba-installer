@@ -375,7 +375,9 @@ func fromDetect() menu.Selections {
 	return menu.Selections{
 		Shell: d.Shell, Opencode: d.Opencode, Windsurf: d.Windsurf,
 		Kimi: d.Kimi, Continue: d.Continue, Cursor: d.Cursor,
-		Zcode: d.Zcode, Twocode: d.Twocode, Claude: d.Claude,
+		Zcode: d.Zcode, Claude: d.Claude,
+		// 2ba-code is not offered yet: it is configured only via
+		// --services 2ba-code, never auto-selected.
 	}
 }
 

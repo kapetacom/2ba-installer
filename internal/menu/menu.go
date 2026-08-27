@@ -24,8 +24,11 @@ var (
 
 // names/descs are the menu rows, in a fixed order that the whole binary relies
 // on (selection index i == this row). Keep in sync with detect + main.
+//
+// 2ba-code is a supported service (Selections.Twocode, --services 2ba-code)
+// but is intentionally not a row: it is not offered in the picker yet.
 var (
-	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "2ba-code", "claude"}
+	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude"}
 	descs = []string{
 		"OPENAI_API_KEY/BASE for aider & similar tools",
 		"OpenCode CLI (~/.config/opencode)",
@@ -34,7 +37,6 @@ var (
 		"Continue (prints manual steps)",
 		"Cursor (prints manual steps)",
 		"ZCode CLI / desktop (~/.zcode)",
-		"2ba-code desktop app (custom providers)",
 		"Claude Code (~/.claude)",
 	}
 )
@@ -56,25 +58,26 @@ type Result struct {
 }
 
 type model struct {
-	sel      [9]bool
+	sel      [8]bool
 	cursor   int
 	quitting bool
 }
 
-// New builds a menu with the given detection pre-ticks.
+// New builds a menu with the given detection pre-ticks. Twocode is not a
+// row (see names), so its detection pre-tick is dropped here.
 func New(initial detect.Services) model {
 	return model{
-		sel: [9]bool{
+		sel: [8]bool{
 			initial.Shell, initial.Opencode, initial.Windsurf,
 			initial.Kimi, initial.Continue, initial.Cursor,
-			initial.Zcode, initial.Twocode, initial.Claude,
+			initial.Zcode, initial.Claude,
 		},
 	}
 }
 
 func (m model) Init() tea.Cmd { return nil }
 
-// Update handles keys: up/down move, space or 1-9 toggle, a selects all,
+// Update handles keys: up/down move, space or 1-8 toggle, a selects all,
 // enter confirms, q quits. It mirrors the historical install.sh key map.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -99,7 +102,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		case "1", "2", "3", "4", "5", "6", "7", "8":
 			if i := int(msg.String()[0] - '1'); i >= 0 && i < len(names) {
 				m.sel[i] = !m.sel[i]
 			}
@@ -126,7 +129,7 @@ func (m model) View() string {
 		b.WriteString("    " + cursor + " " + mark + " " + label + padRight(name, 12) + " " + descs[i] + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("  " + dim.Render("up/down move · space toggle · 1-9 toggle · a all · enter continue · q quit") + "\n")
+	b.WriteString("  " + dim.Render("up/down move · space toggle · 1-8 toggle · a all · enter continue · q quit") + "\n")
 	return b.String()
 }
 
@@ -148,7 +151,9 @@ func Run(stdin io.Reader, stdout io.Writer) (Result, error) {
 		Selections: Selections{
 			Shell: final.sel[0], Opencode: final.sel[1], Windsurf: final.sel[2],
 			Kimi: final.sel[3], Continue: final.sel[4], Cursor: final.sel[5],
-			Zcode: final.sel[6], Twocode: final.sel[7], Claude: final.sel[8],
+			Zcode: final.sel[6], Claude: final.sel[7],
+			// Twocode has no row in the menu yet; it is only ever selected
+			// through --services 2ba-code.
 		},
 		Confirmed: !final.quitting,
 	}, nil

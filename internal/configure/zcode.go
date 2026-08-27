@@ -37,7 +37,6 @@ func ConfigureZcode(e *Env) {
 		e.warnf("ZCode found but no v2 config yet (%s) — run ZCode once so it creates its config, then re-run this installer", cfg)
 		return
 	}
-	e.backup(cfg)
 	if e.DryRun {
 		if fileExists(cfg) && hasProvider2ba(cfg) {
 			e.notef("ZCode — already configured")
@@ -60,6 +59,7 @@ func ConfigureZcode(e *Env) {
 		e.notef("ZCode — already configured")
 		return
 	}
+	e.backup(cfg)
 	providers["2ba"] = map[string]any{
 		"name": "2ba",
 		"kind": "openai-compatible",

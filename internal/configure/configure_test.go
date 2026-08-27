@@ -511,6 +511,24 @@ func TestTwocodeKeepsUserProvider(t *testing.T) {
 	}
 }
 
+func TestTwocodePreservesUnknownFields(t *testing.T) {
+	home := t.TempDir()
+	// Fields the desktop may have added and this installer knows nothing
+	// about must survive the rewrite.
+	seed := `{"schemaVersion":2,"topLevelExtra":"keep","providers":[{"providerId":"custom-12345678-1234-4abc-8def-123456789abc","label":"OpenRouter","apiFormat":"openai-chat-completions","baseURL":"https://openrouter.ai/api/v1","apiKey":"user-secret","models":[{"modelId":"test-model","maxTokens":8192}],"createdAt":1,"updatedAt":1,"icon":"openrouter"}]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	data, _ := os.ReadFile(twocodeFile(home))
+	for _, want := range []string{`"topLevelExtra": "keep"`, `"icon": "openrouter"`, `"maxTokens": 8192`, `"user-secret"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("field %s lost on rewrite:\n%s", want, data)
+		}
+	}
+}
+
 func TestTwocodeExisting2baUntouched(t *testing.T) {
 	home := t.TempDir()
 	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"stale-key","models":[{"modelId":"old-model"}],"createdAt":1,"updatedAt":1}`
@@ -723,6 +741,48 @@ func TestClaudeDryRunExisting(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != existing {
 		t.Errorf("dry run modified the settings:\n%s", got)
+	}
+}
+
+// A backup is only taken right before a real write, so no-op runs must not
+// leave *.bak.2ba files behind.
+func TestNoBackupOnNoOp(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	mustWrite(t, zcfg, `{"provider": {"2ba": {"name": "2ba"}}}`)
+	twc := twocodeFile(home)
+	mustWrite(t, twc, `{"schemaVersion":2,"providers":[{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"`+testBase+`","apiKey":"old","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}]}`)
+	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`)
+
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureZcode(env)
+	ConfigureTwocode(env)
+	ConfigureClaude(env)
+
+	if n := strings.Count(buf.String(), "already configured"); n != 3 {
+		t.Errorf("want three already-configured notes, got %d:\n%s", n, buf.String())
+	}
+	for _, f := range []string{zcfg, twc, claudeSettings(home)} {
+		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
+			t.Errorf("no-op run left a backup: %s.bak.2ba", f)
+		}
+	}
+}
+
+// The same rule on uninstall: a file that holds no 2ba entry is not backed up.
+func TestUninstallNoBackupWhenNoMatch(t *testing.T) {
+	home := t.TempDir()
+	twc := twocodeFile(home)
+	mustWrite(t, twc, `{"schemaVersion":2,"providers":[`+twocodeUserProvider+`]}`)
+	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://proxy.example.com","ANTHROPIC_API_KEY":"k"}}`)
+
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	for _, f := range []string{twc, claudeSettings(home)} {
+		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
+			t.Errorf("uninstall without a 2ba entry left a backup: %s.bak.2ba", f)
+		}
 	}
 }
 

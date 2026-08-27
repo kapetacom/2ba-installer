@@ -29,10 +29,11 @@ const twocodeSchemaVersion = 2
 // twocodeMaxProviders mirrors the desktop's MAXIMUM_PROVIDER_COUNT.
 const twocodeMaxProviders = 25
 
-// twocodeDataDir returns the 2ba-code desktop profile directory, mirroring
+// TwocodeDataDir returns the 2ba-code desktop profile directory, mirroring
 // the app's own lookup: $TWOBA_DATA_DIR, then the platform application-data
-// directory.
-func twocodeDataDir() string {
+// directory. It is the single source of truth for this path; the detect
+// package reuses it instead of keeping a second copy.
+func TwocodeDataDir() string {
 	if v := os.Getenv("TWOBA_DATA_DIR"); v != "" {
 		return v
 	}
@@ -49,30 +50,7 @@ func twocodeDataDir() string {
 
 // twocodeProvidersFile is the custom-provider store the desktop reads.
 func twocodeProvidersFile() string {
-	return filepath.Join(twocodeDataDir(), "agent-home", ".config", "2ba-code", "secrets", "custom-model-providers.json")
-}
-
-// twocodeModel mirrors the desktop's StoredModel (camelCase on disk).
-type twocodeModel struct {
-	ModelID       string `json:"modelId"`
-	ContextWindow int    `json:"contextWindow,omitempty"`
-}
-
-// twocodeProvider mirrors the desktop's StoredProvider.
-type twocodeProvider struct {
-	ProviderID string         `json:"providerId"`
-	Label      string         `json:"label"`
-	APIFormat  string         `json:"apiFormat"`
-	BaseURL    string         `json:"baseURL"`
-	APIKey     string         `json:"apiKey"`
-	Models     []twocodeModel `json:"models"`
-	CreatedAt  int64          `json:"createdAt"`
-	UpdatedAt  int64          `json:"updatedAt"`
-}
-
-type twocodeRoot struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Providers     []twocodeProvider `json:"providers"`
+	return filepath.Join(TwocodeDataDir(), "agent-home", ".config", "2ba-code", "secrets", "custom-model-providers.json")
 }
 
 // trimAPIBase normalizes an API base for comparisons (trimmed, no trailing
@@ -81,9 +59,24 @@ func trimAPIBase(base string) string {
 	return strings.TrimSuffix(strings.TrimSpace(base), "/")
 }
 
-func (r *twocodeRoot) hasBase(base string) bool {
-	for _, p := range r.Providers {
-		if trimAPIBase(p.BaseURL) == base {
+// twocodeProviderBase returns the trimmed base URL of one provider entry of
+// the store, or "" when the entry is not an object with a usable baseURL.
+func twocodeProviderBase(p any) string {
+	obj, _ := p.(map[string]any)
+	if obj == nil {
+		return ""
+	}
+	url, _ := obj["baseURL"].(string)
+	return trimAPIBase(url)
+}
+
+// twocodeProvidersHaveBase reports whether any provider in providers points
+// at base. The desktop keys providers by a random UUID, so the base URL is
+// the only stable handle for the 2ba entry; ConfigureTwocode and
+// removeTwocodeProvider share this predicate.
+func twocodeProvidersHaveBase(providers []any, base string) bool {
+	for _, p := range providers {
+		if twocodeProviderBase(p) == base {
 			return true
 		}
 	}
@@ -112,12 +105,12 @@ func newTwocodeProviderID() (string, error) {
 }
 
 // ConfigureTwocode adds a "2ba" custom provider to the 2ba-code desktop's
-// custom-model-providers.json. The desktop keys providers by a random UUID,
-// so we match on the API base instead: an existing provider pointing at the
-// same base is left untouched, and every other entry in the file is
-// preserved verbatim.
+// custom-model-providers.json. An existing provider pointing at the same
+// base is left untouched, and the store is handled as generic JSON so every
+// field of the other entries — including ones this installer does not know
+// about — survives the rewrite.
 func ConfigureTwocode(e *Env) {
-	dataDir := twocodeDataDir()
+	dataDir := TwocodeDataDir()
 	if !dirExists(dataDir) {
 		e.warnf("2ba-code not detected (no %s) — install it, run it once, then re-run this installer", dataDir)
 		return
@@ -129,37 +122,41 @@ func ConfigureTwocode(e *Env) {
 		return
 	}
 	file := twocodeProvidersFile()
-	e.backup(file)
 
-	root := &twocodeRoot{SchemaVersion: twocodeSchemaVersion}
+	root := map[string]any{"schemaVersion": twocodeSchemaVersion}
+	providers := []any{}
 	if fileExists(file) {
 		data, err := os.ReadFile(file)
 		if err != nil {
 			e.warnf("could not read %s: %v — leaving it untouched", file, err)
 			return
 		}
-		var parsed twocodeRoot
+		var parsed map[string]any
 		if err := json.Unmarshal(data, &parsed); err != nil {
 			e.warnf("%s is not valid JSON — leaving it untouched (fix or remove it, then re-run)", file)
 			return
 		}
-		if parsed.SchemaVersion != twocodeSchemaVersion {
-			e.warnf("%s has unsupported schemaVersion %d — leaving it untouched", file, parsed.SchemaVersion)
+		if ver, _ := parsed["schemaVersion"].(float64); int(ver) != twocodeSchemaVersion {
+			e.warnf("%s has unsupported schemaVersion %v — leaving it untouched", file, parsed["schemaVersion"])
 			return
 		}
-		root = &parsed
+		switch p := parsed["providers"].(type) {
+		case []any:
+			providers = p
+		case nil:
+		default:
+			e.warnf("%s has a providers field that is not a list — leaving it untouched", file)
+			return
+		}
+		root = parsed
 	}
 
-	if root.hasBase(trimAPIBase(e.APIBase)) {
-		if e.DryRun {
-			e.notef("2ba-code — already configured")
-		} else {
-			e.notef("2ba-code — already configured")
-		}
+	if twocodeProvidersHaveBase(providers, trimAPIBase(e.APIBase)) {
+		e.notef("2ba-code — already configured")
 		return
 	}
-	if len(root.Providers) >= twocodeMaxProviders {
-		e.warnf("%s already holds %d providers (the 2ba-code maximum) — add 2ba in the app instead", file, len(root.Providers))
+	if len(providers) >= twocodeMaxProviders {
+		e.warnf("%s already holds %d providers (the 2ba-code maximum) — add 2ba in the app instead", file, len(providers))
 		return
 	}
 	if e.DryRun {
@@ -173,16 +170,17 @@ func ConfigureTwocode(e *Env) {
 		return
 	}
 	now := time.Now().UnixMilli()
-	root.Providers = append(root.Providers, twocodeProvider{
-		ProviderID: id,
-		Label:      "2ba",
-		APIFormat:  "openai-chat-completions",
-		BaseURL:    trimAPIBase(e.APIBase),
-		APIKey:     e.APIKey,
-		Models:     []twocodeModel{{ModelID: e.Model, ContextWindow: zcodeContextSize}},
-		CreatedAt:  now,
-		UpdatedAt:  now,
+	root["providers"] = append(providers, map[string]any{
+		"providerId": id,
+		"label":      "2ba",
+		"apiFormat":  "openai-chat-completions",
+		"baseURL":    trimAPIBase(e.APIBase),
+		"apiKey":     e.APIKey,
+		"models":     []any{map[string]any{"modelId": e.Model, "contextWindow": zcodeContextSize}},
+		"createdAt":  now,
+		"updatedAt":  now,
 	})
+	e.backup(file)
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		e.warnf("could not create the 2ba-code secrets directory: %v", err)
 		return
@@ -198,6 +196,22 @@ func ConfigureTwocode(e *Env) {
 	e.logf("2ba-code: provider \"2ba\" added, model %s (%s)", e.Model, file)
 }
 
+// twocodeStoreHasBase reports whether file holds at least one provider whose
+// base URL matches base — the predicate removeTwocodeProvider removes on.
+// Used to back the file up only when the uninstall actually removes an entry.
+func twocodeStoreHasBase(file, base string) bool {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return false
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return false
+	}
+	providers, _ := root["providers"].([]any)
+	return twocodeProvidersHaveBase(providers, base)
+}
+
 // removeTwocodeProvider drops every provider whose base URL matches base —
 // the same predicate ConfigureTwocode uses to find the entry. It returns
 // removed=true when at least one provider was dropped. A store left with no
@@ -208,18 +222,19 @@ func removeTwocodeProvider(file, base string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var root twocodeRoot
+	var root map[string]any
 	if err := json.Unmarshal(data, &root); err != nil {
 		return false, err
 	}
-	kept := []twocodeProvider{}
+	providers, _ := root["providers"].([]any)
+	kept := []any{}
 	removed := 0
-	for _, p := range root.Providers {
-		if trimAPIBase(p.BaseURL) == base {
+	for _, p := range providers {
+		if twocodeProviderBase(p) == base {
 			removed++
-		} else {
-			kept = append(kept, p)
+			continue
 		}
+		kept = append(kept, p)
 	}
 	if removed == 0 {
 		return false, nil
@@ -228,7 +243,7 @@ func removeTwocodeProvider(file, base string) (bool, error) {
 		_ = os.Remove(file)
 		return true, nil
 	}
-	root.Providers = kept
+	root["providers"] = kept
 	if err := writeIndentedJSON(file, root); err != nil {
 		return false, err
 	}

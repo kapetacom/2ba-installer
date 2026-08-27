@@ -23,8 +23,10 @@ import (
 // only write it when it is unset; a settings file already pointing at another
 // gateway is left untouched.
 
-// claudeConfigDir returns $CLAUDE_CONFIG_DIR or ~/.claude.
-func claudeConfigDir() string {
+// ClaudeConfigDir returns $CLAUDE_CONFIG_DIR or ~/.claude. It is the single
+// source of truth for this path; the detect package reuses it instead of
+// keeping a second copy.
+func ClaudeConfigDir() string {
 	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
 		return v
 	}
@@ -33,7 +35,7 @@ func claudeConfigDir() string {
 
 // claudeSettingsFile is the user-scope settings file Claude Code reads.
 func claudeSettingsFile() string {
-	return filepath.Join(claudeConfigDir(), "settings.json")
+	return filepath.Join(ClaudeConfigDir(), "settings.json")
 }
 
 // claudeBaseURL returns the ANTHROPIC_BASE_URL for the configured API base:
@@ -57,7 +59,7 @@ var claudeManagedEnvVars = []string{
 // file already pointing ANTHROPIC_BASE_URL at another gateway is left
 // untouched.
 func ConfigureClaude(e *Env) {
-	home := claudeConfigDir()
+	home := ClaudeConfigDir()
 	if !dirExists(home) && !onPath("claude") {
 		e.warnf("Claude Code not detected (no %s) — install it, run it once, then re-run this installer", home)
 		return
@@ -67,7 +69,6 @@ func ConfigureClaude(e *Env) {
 		return
 	}
 	cfg := claudeSettingsFile()
-	e.backup(cfg)
 
 	obj := map[string]any{}
 	if exists, ok := loadJSONObject(cfg, &obj); exists && !ok {
@@ -84,11 +85,7 @@ func ConfigureClaude(e *Env) {
 		// Normalize both sides: a hand-written config may carry the
 		// OpenAI-style /v1 suffix.
 		if claudeBaseURL(base) == ours {
-			if e.DryRun {
-				e.notef("Claude Code — already configured")
-			} else {
-				e.notef("Claude Code — already configured")
-			}
+			e.notef("Claude Code — already configured")
 			return
 		}
 		e.warnf("Claude Code already points ANTHROPIC_BASE_URL at %s — leaving %s untouched", base, cfg)
@@ -108,11 +105,32 @@ func ConfigureClaude(e *Env) {
 		e.warnf("could not create %s: %v", home, err)
 		return
 	}
+	e.backup(cfg)
 	if err := writeIndentedJSON(cfg, obj); err != nil {
 		e.warnf("could not write %s: %v", cfg, err)
 		return
 	}
 	e.logf("Claude Code: 2ba configured, model %s (%s)", e.Model, cfg)
+}
+
+// claudeConfigManaged reports whether path's env block points at base — the
+// predicate removeClaudeConfig removes on. Used to back the file up only
+// when the uninstall actually removes the installer's keys.
+func claudeConfigManaged(path, base string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return false
+	}
+	env, _ := obj["env"].(map[string]any)
+	if env == nil {
+		return false
+	}
+	baseURL, _ := env["ANTHROPIC_BASE_URL"].(string)
+	return claudeBaseURL(baseURL) == base
 }
 
 // removeClaudeConfig strips the ANTHROPIC_* vars the installer wrote, but

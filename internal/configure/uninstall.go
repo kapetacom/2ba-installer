@@ -80,13 +80,16 @@ func Uninstall(e *Env) {
 		}
 	}
 
-	// 2ba-code custom-provider store (owner-only secrets file)
+	// 2ba-code custom-provider store (owner-only secrets file). The backup
+	// happens only when a matching entry exists, so an unrelated store is
+	// left completely untouched.
 	if tp := twocodeProvidersFile(); fileExists(tp) {
+		base := trimAPIBase(e.APIBase)
 		if e.DryRun {
 			e.logf("would remove the 2ba provider from %s", tp)
-		} else {
+		} else if twocodeStoreHasBase(tp, base) {
 			e.backup(tp)
-			if removed, err := removeTwocodeProvider(tp, trimAPIBase(e.APIBase)); err != nil {
+			if removed, err := removeTwocodeProvider(tp, base); err != nil {
 				e.warnf("%s is not valid JSON — leaving it untouched", tp)
 			} else if removed {
 				e.logf("removed 2ba entry from %s", tp)
@@ -94,13 +97,14 @@ func Uninstall(e *Env) {
 		}
 	}
 
-	// Claude Code settings (env block)
+	// Claude Code settings (env block), same backup-only-when-matching rule.
 	if cs := claudeSettingsFile(); fileExists(cs) {
+		base := claudeBaseURL(e.APIBase)
 		if e.DryRun {
 			e.logf("would remove the 2ba configuration from %s", cs)
-		} else {
+		} else if claudeConfigManaged(cs, base) {
 			e.backup(cs)
-			if removed, err := removeClaudeConfig(cs, claudeBaseURL(e.APIBase)); err != nil {
+			if removed, err := removeClaudeConfig(cs, base); err != nil {
 				e.warnf("%s is not valid JSON — leaving it untouched", cs)
 			} else if removed {
 				e.logf("removed 2ba configuration from %s", cs)

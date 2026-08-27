@@ -7,7 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+
+	"github.com/kapetacom/2ba-installer/internal/configure"
 )
 
 // Services is the set of supported targets and whether each should be
@@ -59,32 +60,6 @@ func zcodeHome() string {
 	return filepath.Join(home(), ".zcode")
 }
 
-// twocodeDataDir returns the 2ba-code desktop profile directory, mirroring
-// the app's own lookup: $TWOBA_DATA_DIR, then the platform application-data
-// directory.
-func twocodeDataDir() string {
-	if v := os.Getenv("TWOBA_DATA_DIR"); v != "" {
-		return v
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(home(), "Library", "Application Support", "2ba-code")
-	case "windows":
-		if v := os.Getenv("APPDATA"); v != "" {
-			return filepath.Join(v, "2ba-code")
-		}
-	}
-	return filepath.Join(xdgConfig(), "2ba-code")
-}
-
-// claudeConfigDir returns $CLAUDE_CONFIG_DIR or ~/.claude.
-func claudeConfigDir() string {
-	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
-		return v
-	}
-	return filepath.Join(home(), ".claude")
-}
-
 func dirExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && st.IsDir()
@@ -128,8 +103,8 @@ func Detect() Services {
 	s.Continue = dirExists(filepath.Join(h, ".continue"))
 	s.Cursor = dirExists(filepath.Join(h, ".cursor")) || onPath("cursor")
 	s.Zcode = dirExists(zcodeHome()) || onPath("zcode")
-	s.Twocode = dirExists(twocodeDataDir())
-	s.Claude = dirExists(claudeConfigDir()) || onPath("claude")
+	s.Twocode = dirExists(configure.TwocodeDataDir())
+	s.Claude = dirExists(configure.ClaudeConfigDir()) || onPath("claude")
 
 	return s
 }
