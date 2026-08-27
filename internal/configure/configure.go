@@ -48,6 +48,7 @@ func NewEnv(model, apiBase, apiOrigin, apiKey, keyFile string, dryRun bool) *Env
 
 func (e *Env) logf(format string, a ...any)  { fmt.Fprintln(e.Out, ui.Log(fmt.Sprintf(format, a...))) }
 func (e *Env) warnf(format string, a ...any) { fmt.Fprintln(e.Out, ui.Warn(fmt.Sprintf(format, a...))) }
+func (e *Env) notef(format string, a ...any) { fmt.Fprintln(e.Out, ui.Note(fmt.Sprintf(format, a...))) }
 func (e *Env) hintf(format string, a ...any) { fmt.Fprintln(e.Out, ui.Hint(fmt.Sprintf(format, a...))) }
 
 func dirExists(p string) bool {

@@ -35,8 +35,9 @@ func removeJSONEntry(path, key string) error {
 }
 
 // Uninstall removes everything the installer manages: the shell rc block, the
-// agent JSON entries, the Kimi TOML blocks, and the key file. Backups are kept
-// as *.bak.2ba next to the modified files.
+// agent JSON entries, the 2ba-code custom-provider entry, the Claude Code
+// env block, the Kimi TOML blocks, and the key file. Backups are kept as
+// *.bak.2ba next to the modified files.
 func Uninstall(e *Env) {
 	e.logf("removing 2ba.ai managed configuration…")
 
@@ -76,6 +77,38 @@ func Uninstall(e *Env) {
 			e.warnf("%s is not valid JSON — leaving it untouched", cfg)
 		} else {
 			e.logf("removed 2ba entry from %s", cfg)
+		}
+	}
+
+	// 2ba-code custom-provider store (owner-only secrets file). The backup
+	// happens only when a matching entry exists, so an unrelated store is
+	// left completely untouched.
+	if tp := twocodeProvidersFile(); fileExists(tp) {
+		base := trimAPIBase(e.APIBase)
+		if e.DryRun {
+			e.logf("would remove the 2ba provider from %s", tp)
+		} else if twocodeStoreHasBase(tp, base) {
+			e.backup(tp)
+			if removed, err := removeTwocodeProvider(tp, base); err != nil {
+				e.warnf("%s is not valid JSON — leaving it untouched", tp)
+			} else if removed {
+				e.logf("removed 2ba entry from %s", tp)
+			}
+		}
+	}
+
+	// Claude Code settings (env block), same backup-only-when-matching rule.
+	if cs := claudeSettingsFile(); fileExists(cs) {
+		base := claudeBaseURL(e.APIBase)
+		if e.DryRun {
+			e.logf("would remove the 2ba configuration from %s", cs)
+		} else if claudeConfigManaged(cs, base) {
+			e.backup(cs)
+			if removed, err := removeClaudeConfig(cs, base); err != nil {
+				e.warnf("%s is not valid JSON — leaving it untouched", cs)
+			} else if removed {
+				e.logf("removed 2ba configuration from %s", cs)
+			}
 		}
 	}
 

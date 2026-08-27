@@ -43,5 +43,5 @@ func ConfigureShellEnv(e *Env) {
 		e.warnf("could not write %s: %v", rc, err)
 		return
 	}
-	e.logf("aider-ready env added to %s (reload your shell or: source %s)", rc, rc)
+	e.logf("OPENAI_* env added to %s (reload your shell, or source it)", rc)
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/kapetacom/2ba-installer/internal/configure"
 )
 
 // Services is the set of supported targets and whether each should be
@@ -19,6 +21,8 @@ type Services struct {
 	Continue bool
 	Cursor   bool
 	Zcode    bool
+	Twocode  bool
+	Claude   bool
 
 	// ShellRC is the first existing shell rc file ("" if none).
 	ShellRC string
@@ -99,6 +103,8 @@ func Detect() Services {
 	s.Continue = dirExists(filepath.Join(h, ".continue"))
 	s.Cursor = dirExists(filepath.Join(h, ".cursor")) || onPath("cursor")
 	s.Zcode = dirExists(zcodeHome()) || onPath("zcode")
+	s.Twocode = dirExists(configure.TwocodeDataDir())
+	s.Claude = dirExists(configure.ClaudeConfigDir()) || onPath("claude")
 
 	return s
 }
@@ -120,6 +126,10 @@ func (s Services) Has(name string) bool {
 		return s.Cursor
 	case "zcode":
 		return s.Zcode
+	case "2ba-code":
+		return s.Twocode
+	case "claude":
+		return s.Claude
 	}
 	return false
 }

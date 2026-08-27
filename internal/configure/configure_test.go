@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,8 @@ func newEnv(t *testing.T, home, model, key string, dryRun bool) (*Env, *bytes.Bu
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(home, ".kimi-code"))
 	t.Setenv("ZCODE_HOME", filepath.Join(home, ".zcode"))
+	t.Setenv("TWOBA_DATA_DIR", filepath.Join(home, ".config", "2ba-code"))
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	var buf bytes.Buffer
 	env := NewEnv(model, testBase, testOrigin, key, filepath.Join(home, ".config", "2ba", "2BA_API_KEY"), dryRun)
 	env.Out = &buf
@@ -133,7 +136,7 @@ func TestOpencodeExisting2baUntouched(t *testing.T) {
 	if got, _ := os.ReadFile(ocPath); string(got) != existing {
 		t.Errorf("existing 2ba provider was modified:\n%s", got)
 	}
-	if !strings.Contains(buf.String(), "leaving it as-is") {
+	if !strings.Contains(buf.String(), "already configured") {
 		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
 	}
 }
@@ -253,7 +256,7 @@ func TestKimiUserOwnedEntries(t *testing.T) {
 	if got, _ := os.ReadFile(cfgPath); string(got) != owned {
 		t.Errorf("user-owned 2ba provider was modified:\n%s", got)
 	}
-	if !strings.Contains(buf.String(), "leaving it as-is") {
+	if !strings.Contains(buf.String(), "already configured") {
 		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
 	}
 }
@@ -333,13 +336,16 @@ func TestZcodeExisting2baUntouched(t *testing.T) {
 	if got, _ := os.ReadFile(zcfg); string(got) != existing {
 		t.Errorf("existing 2ba provider was modified:\n%s", got)
 	}
-	if !strings.Contains(buf.String(), "leaving it as-is") {
+	if !strings.Contains(buf.String(), "already configured") {
 		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
 	}
 }
 
 func TestZcodeNoHomeDir(t *testing.T) {
 	home := t.TempDir()
+	// Keep zcode off PATH so the "not detected" branch is taken even on a
+	// machine that has zcode installed.
+	t.Setenv("PATH", t.TempDir())
 	env, buf := newEnv(t, home, "amber", "k", false)
 	ConfigureZcode(env)
 	if !strings.Contains(buf.String(), "ZCode not detected") || !strings.Contains(buf.String(), "install it, run it once") {
@@ -395,11 +401,388 @@ func TestZcodeDryRunExisting(t *testing.T) {
 	mustWrite(t, zcfg, existing)
 	env, buf := newEnv(t, home, "amber", "k", true)
 	ConfigureZcode(env)
-	if !strings.Contains(buf.String(), "would leave the existing") {
+	if !strings.Contains(buf.String(), "already configured") {
 		t.Errorf("dry run must match the real path (leave existing provider as-is):\n%s", buf.String())
 	}
 	if got, _ := os.ReadFile(zcfg); string(got) != existing {
 		t.Errorf("dry run modified the zcode config:\n%s", got)
+	}
+}
+
+// -------------------------------------------------------------------- 2ba-code
+
+// twocodeFile is the custom-provider store under the pinned TWOBA_DATA_DIR.
+func twocodeFile(home string) string {
+	return filepath.Join(home, ".config", "2ba-code", "agent-home", ".config", "2ba-code", "secrets", "custom-model-providers.json")
+}
+
+// twocodeSeed is a valid store with one user-owned provider, as the desktop
+// would have written it.
+const twocodeUserProvider = `{"providerId":"custom-12345678-1234-4abc-8def-123456789abc","label":"OpenRouter","apiFormat":"openai-chat-completions","baseURL":"https://openrouter.ai/api/v1","apiKey":"user-secret","models":[{"modelId":"test-model"}],"createdAt":1,"updatedAt":1}`
+
+func TestTwocodeAddCreatesFile(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "2ba-code"))
+	env, buf := newEnv(t, home, "amber", "tuba-sk-twocode-key", false)
+
+	ConfigureTwocode(env)
+
+	data, err := os.ReadFile(twocodeFile(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		SchemaVersion int `json:"schemaVersion"`
+		Providers     []struct {
+			ProviderID string `json:"providerId"`
+			Label      string `json:"label"`
+			APIFormat  string `json:"apiFormat"`
+			BaseURL    string `json:"baseURL"`
+			APIKey     string `json:"apiKey"`
+			Models     []struct {
+				ModelID       string `json:"modelId"`
+				ContextWindow int    `json:"contextWindow"`
+			} `json:"models"`
+			CreatedAt int64 `json:"createdAt"`
+			UpdatedAt int64 `json:"updatedAt"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	if root.SchemaVersion != 2 || len(root.Providers) != 1 {
+		t.Fatalf("unexpected store:\n%s", data)
+	}
+	p := root.Providers[0]
+	if !regexp.MustCompile(`^custom-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(p.ProviderID) {
+		t.Errorf("providerId %q is not custom-<uuidv4>", p.ProviderID)
+	}
+	if p.Label != "2ba" || p.APIFormat != "openai-chat-completions" || p.BaseURL != testBase || p.APIKey != "tuba-sk-twocode-key" {
+		t.Errorf("provider fields wrong:\n%s", data)
+	}
+	if len(p.Models) != 1 || p.Models[0].ModelID != "amber" || p.Models[0].ContextWindow != 262144 {
+		t.Errorf("model entry wrong:\n%s", data)
+	}
+	if p.CreatedAt <= 0 || p.UpdatedAt <= 0 {
+		t.Errorf("timestamps missing:\n%s", data)
+	}
+	if st, _ := os.Stat(twocodeFile(home)); st.Mode().Perm() != 0o600 {
+		t.Errorf("providers file perms = %v, want 0600", st.Mode().Perm())
+	}
+	secrets := filepath.Join(home, ".config", "2ba-code", "agent-home", ".config", "2ba-code", "secrets")
+	if st, _ := os.Stat(secrets); st.Mode().Perm() != 0o700 {
+		t.Errorf("secrets dir perms = %v, want 0700", st.Mode().Perm())
+	}
+	if !strings.Contains(buf.String(), "2ba-code: provider") {
+		t.Errorf("expected add notice:\n%s", buf.String())
+	}
+}
+
+func TestTwocodeKeepsUserProvider(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"schemaVersion":2,"providers":[` + twocodeUserProvider + `]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	data, _ := os.ReadFile(twocodeFile(home))
+	var root struct {
+		Providers []struct {
+			Label  string `json:"label"`
+			APIKey string `json:"apiKey"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	if len(root.Providers) != 2 {
+		t.Fatalf("want user + 2ba provider, got %d:\n%s", len(root.Providers), data)
+	}
+	byLabel := map[string]string{}
+	for _, p := range root.Providers {
+		byLabel[p.Label] = p.APIKey
+	}
+	if byLabel["OpenRouter"] != "user-secret" {
+		t.Errorf("user provider key modified:\n%s", data)
+	}
+	if byLabel["2ba"] != "k" {
+		t.Errorf("2ba provider missing or wrong:\n%s", data)
+	}
+}
+
+func TestTwocodePreservesUnknownFields(t *testing.T) {
+	home := t.TempDir()
+	// Fields the desktop may have added and this installer knows nothing
+	// about must survive the rewrite.
+	seed := `{"schemaVersion":2,"topLevelExtra":"keep","providers":[{"providerId":"custom-12345678-1234-4abc-8def-123456789abc","label":"OpenRouter","apiFormat":"openai-chat-completions","baseURL":"https://openrouter.ai/api/v1","apiKey":"user-secret","models":[{"modelId":"test-model","maxTokens":8192}],"createdAt":1,"updatedAt":1,"icon":"openrouter"}]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	data, _ := os.ReadFile(twocodeFile(home))
+	for _, want := range []string{`"topLevelExtra": "keep"`, `"icon": "openrouter"`, `"maxTokens": 8192`, `"user-secret"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("field %s lost on rewrite:\n%s", want, data)
+		}
+	}
+}
+
+func TestTwocodeExisting2baUntouched(t *testing.T) {
+	home := t.TempDir()
+	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"stale-key","models":[{"modelId":"old-model"}],"createdAt":1,"updatedAt":1}`
+	seed := `{"schemaVersion":2,"providers":[` + ours + `]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	if got, _ := os.ReadFile(twocodeFile(home)); string(got) != seed {
+		t.Errorf("existing 2ba provider was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+func TestTwocodeNoProfileDir(t *testing.T) {
+	home := t.TempDir()
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureTwocode(env)
+	if !strings.Contains(buf.String(), "2ba-code not detected") || !strings.Contains(buf.String(), "install it, run it once") {
+		t.Errorf("expected not-detected warning:\n%s", buf.String())
+	}
+}
+
+func TestTwocodeMalformedJSON(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "2ba-code"))
+	broken := "{not json"
+	mustWrite(t, twocodeFile(home), broken)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	if got, _ := os.ReadFile(twocodeFile(home)); string(got) != broken {
+		t.Errorf("malformed store was rewritten:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "not valid JSON") {
+		t.Errorf("expected malformed-JSON warning:\n%s", buf.String())
+	}
+}
+
+func TestTwocodeUnsupportedSchema(t *testing.T) {
+	home := t.TempDir()
+	legacy := `{"schemaVersion":1,"providers":[]}`
+	mustWrite(t, twocodeFile(home), legacy)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	if got, _ := os.ReadFile(twocodeFile(home)); string(got) != legacy {
+		t.Errorf("legacy store was rewritten:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "unsupported schemaVersion") {
+		t.Errorf("expected schema warning:\n%s", buf.String())
+	}
+}
+
+func TestTwocodeDryRun(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "2ba-code"))
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureTwocode(env)
+	if !strings.Contains(buf.String(), "would add 2ba provider to") {
+		t.Errorf("dry-run plan missing 2ba-code entry:\n%s", buf.String())
+	}
+	if _, err := os.Stat(twocodeFile(home)); !os.IsNotExist(err) {
+		t.Errorf("dry run created the providers file")
+	}
+}
+
+func TestTwocodeDryRunExisting(t *testing.T) {
+	home := t.TempDir()
+	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"k","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}`
+	seed := `{"schemaVersion":2,"providers":[` + ours + `]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureTwocode(env)
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("dry run must match the real path (leave existing provider as-is):\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(twocodeFile(home)); string(got) != seed {
+		t.Errorf("dry run modified the store:\n%s", got)
+	}
+}
+
+// ----------------------------------------------------------------------- claude
+
+func claudeSettings(home string) string {
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+func TestClaudeAddMergesIntoSettings(t *testing.T) {
+	home := t.TempDir()
+	mustWrite(t, claudeSettings(home), `{"theme":"dark","env":{"SOME_VAR":"keep"}}`)
+	env, buf := newEnv(t, home, "amber", "tuba-sk-claude-key", false)
+
+	ConfigureClaude(env)
+
+	data, _ := os.ReadFile(claudeSettings(home))
+	var cfg struct {
+		Theme string            `json:"theme"`
+		Env   map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	if cfg.Theme != "dark" || cfg.Env["SOME_VAR"] != "keep" {
+		t.Errorf("user settings lost:\n%s", data)
+	}
+	want := map[string]string{
+		"ANTHROPIC_BASE_URL":         "https://api.2ba.ai",
+		"ANTHROPIC_AUTH_TOKEN":       "tuba-sk-claude-key",
+		"ANTHROPIC_MODEL":            "amber",
+		"ANTHROPIC_SMALL_FAST_MODEL": "amber",
+	}
+	for k, v := range want {
+		if cfg.Env[k] != v {
+			t.Errorf("env %s = %q, want %q:\n%s", k, cfg.Env[k], v, data)
+		}
+	}
+	if st, _ := os.Stat(claudeSettings(home)); st.Mode().Perm() != 0o600 {
+		t.Errorf("settings perms = %v, want 0600", st.Mode().Perm())
+	}
+	if !strings.Contains(buf.String(), "Claude Code: 2ba configured") {
+		t.Errorf("expected configure notice:\n%s", buf.String())
+	}
+}
+
+func TestClaudeExisting2baUntouched(t *testing.T) {
+	home := t.TempDir()
+	existing := `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai/v1","ANTHROPIC_AUTH_TOKEN":"stale-key","ANTHROPIC_MODEL":"amber"}}`
+	mustWrite(t, claudeSettings(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureClaude(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != existing {
+		t.Errorf("existing 2ba configuration was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+func TestClaudeOtherGatewayUntouched(t *testing.T) {
+	home := t.TempDir()
+	existing := `{"env":{"ANTHROPIC_BASE_URL":"https://proxy.example.com","ANTHROPIC_API_KEY":"real-anthropic-key"}}`
+	mustWrite(t, claudeSettings(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureClaude(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != existing {
+		t.Errorf("user's gateway configuration was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already points ANTHROPIC_BASE_URL") {
+		t.Errorf("expected other-gateway warning:\n%s", buf.String())
+	}
+}
+
+func TestClaudeNoHomeDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir()) // keep claude off PATH too
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureClaude(env)
+	if !strings.Contains(buf.String(), "Claude Code not detected") || !strings.Contains(buf.String(), "install it, run it once") {
+		t.Errorf("expected not-detected warning:\n%s", buf.String())
+	}
+}
+
+func TestClaudeMalformedJSON(t *testing.T) {
+	home := t.TempDir()
+	broken := "{not json"
+	mustWrite(t, claudeSettings(home), broken)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureClaude(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != broken {
+		t.Errorf("malformed settings were rewritten:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "not valid JSON") {
+		t.Errorf("expected malformed-JSON warning:\n%s", buf.String())
+	}
+}
+
+func TestClaudeDryRun(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".claude"))
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureClaude(env)
+	if !strings.Contains(buf.String(), "would add 2ba provider to") {
+		t.Errorf("dry-run plan missing claude entry:\n%s", buf.String())
+	}
+	if _, err := os.Stat(claudeSettings(home)); !os.IsNotExist(err) {
+		t.Errorf("dry run created the settings file")
+	}
+}
+
+func TestClaudeDryRunExisting(t *testing.T) {
+	home := t.TempDir()
+	existing := `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"k"}}`
+	mustWrite(t, claudeSettings(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureClaude(env)
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("dry run must match the real path (leave existing configuration as-is):\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != existing {
+		t.Errorf("dry run modified the settings:\n%s", got)
+	}
+}
+
+// A backup is only taken right before a real write, so no-op runs must not
+// leave *.bak.2ba files behind.
+func TestNoBackupOnNoOp(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	mustWrite(t, zcfg, `{"provider": {"2ba": {"name": "2ba"}}}`)
+	twc := twocodeFile(home)
+	mustWrite(t, twc, `{"schemaVersion":2,"providers":[{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"`+testBase+`","apiKey":"old","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}]}`)
+	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`)
+
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureZcode(env)
+	ConfigureTwocode(env)
+	ConfigureClaude(env)
+
+	if n := strings.Count(buf.String(), "already configured"); n != 3 {
+		t.Errorf("want three already-configured notes, got %d:\n%s", n, buf.String())
+	}
+	for _, f := range []string{zcfg, twc, claudeSettings(home)} {
+		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
+			t.Errorf("no-op run left a backup: %s.bak.2ba", f)
+		}
+	}
+}
+
+// The same rule on uninstall: a file that holds no 2ba entry is not backed up.
+func TestUninstallNoBackupWhenNoMatch(t *testing.T) {
+	home := t.TempDir()
+	twc := twocodeFile(home)
+	mustWrite(t, twc, `{"schemaVersion":2,"providers":[`+twocodeUserProvider+`]}`)
+	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://proxy.example.com","ANTHROPIC_API_KEY":"k"}}`)
+
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	for _, f := range []string{twc, claudeSettings(home)} {
+		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
+			t.Errorf("uninstall without a 2ba entry left a backup: %s.bak.2ba", f)
+		}
 	}
 }
 
@@ -487,6 +870,108 @@ func TestUninstallZcode(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "removed 2ba entry") {
 		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+func TestUninstallTwocodeKeepsOther(t *testing.T) {
+	home := t.TempDir()
+	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"tuba-sk-old","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}`
+	seed := `{"schemaVersion":2,"providers":[` + twocodeUserProvider + `,` + ours + `]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	data, err := os.ReadFile(twocodeFile(home))
+	if err != nil {
+		t.Fatalf("store should survive with the user provider: %v", err)
+	}
+	if strings.Contains(string(data), "custom-aaaaaaaa") || strings.Contains(string(data), "tuba-sk-old") {
+		t.Errorf("2ba provider not removed:\n%s", data)
+	}
+	if !strings.Contains(string(data), "user-secret") {
+		t.Errorf("user provider was removed:\n%s", data)
+	}
+	if !strings.Contains(buf.String(), "removed 2ba entry") {
+		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+func TestUninstallTwocodeDeletesEmptyStore(t *testing.T) {
+	home := t.TempDir()
+	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"tuba-sk-old","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}`
+	mustWrite(t, twocodeFile(home), `{"schemaVersion":2,"providers":[`+ours+`]}`)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	if _, err := os.Stat(twocodeFile(home)); !os.IsNotExist(err) {
+		t.Errorf("store with only the 2ba provider should be deleted")
+	}
+}
+
+func TestUninstallTwocodeNoMatch(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"schemaVersion":2,"providers":[` + twocodeUserProvider + `]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	if got, _ := os.ReadFile(twocodeFile(home)); string(got) != seed {
+		t.Errorf("unrelated store was rewritten:\n%s", got)
+	}
+}
+
+func TestUninstallClaude(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"theme":"dark","env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"tuba-sk-old","ANTHROPIC_MODEL":"amber","ANTHROPIC_SMALL_FAST_MODEL":"amber"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	data, _ := os.ReadFile(claudeSettings(home))
+	var cfg struct {
+		Theme string            `json:"theme"`
+		Env   map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	if cfg.Theme != "dark" {
+		t.Errorf("user settings lost:\n%s", data)
+	}
+	if cfg.Env != nil {
+		t.Errorf("empty env block should be dropped:\n%s", data)
+	}
+	for _, k := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"} {
+		if strings.Contains(string(data), k) {
+			t.Errorf("%s not removed:\n%s", k, data)
+		}
+	}
+	if !strings.Contains(buf.String(), "removed 2ba configuration") {
+		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+func TestUninstallClaudeKeepsUserKey(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"tuba-sk-old","ANTHROPIC_API_KEY":"user-real-key"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); !strings.Contains(string(got), `"ANTHROPIC_API_KEY": "user-real-key"`) {
+		t.Errorf("user's ANTHROPIC_API_KEY was removed:\n%s", got)
+	}
+}
+
+func TestUninstallClaudeNoMatch(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://proxy.example.com","ANTHROPIC_API_KEY":"k"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != seed {
+		t.Errorf("unrelated settings were rewritten:\n%s", got)
 	}
 }
 

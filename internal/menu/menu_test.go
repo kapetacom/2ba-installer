@@ -40,6 +40,19 @@ func TestToggleByNumber(t *testing.T) {
 	if !m.sel[6] {
 		t.Error("7 should toggle zcode on")
 	}
+	m = update(m, keyRunes("8")) // claude on
+	if !m.sel[7] {
+		t.Error("8 should toggle claude on")
+	}
+	// 2ba-code is not a menu row, so key 9 (which would have been ninth)
+	// must be a no-op.
+	m = update(m, keyRunes("9"))
+	want := []bool{false, false, true, false, false, false, true, true}
+	for i := range m.sel {
+		if m.sel[i] != want[i] {
+			t.Errorf("9 should be a no-op; sel = %v, want %v", m.sel, want)
+		}
+	}
 }
 
 func TestArrowsAndSpace(t *testing.T) {

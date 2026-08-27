@@ -27,7 +27,7 @@ func ConfigureWindsurf(e *Env) {
 		obj["models"] = models
 	}
 	if _, exists := models["2BA"]; exists {
-		e.logf("existing \"2BA\" model found in %s — leaving it as-is", cfg)
+		e.notef("Windsurf — already configured")
 		return
 	}
 	anyDefault := false

@@ -37,10 +37,9 @@ func ConfigureZcode(e *Env) {
 		e.warnf("ZCode found but no v2 config yet (%s) — run ZCode once so it creates its config, then re-run this installer", cfg)
 		return
 	}
-	e.backup(cfg)
 	if e.DryRun {
 		if fileExists(cfg) && hasProvider2ba(cfg) {
-			e.logf("would leave the existing \"2ba\" provider in %s as-is", cfg)
+			e.notef("ZCode — already configured")
 		} else {
 			e.logf("would add 2ba provider to %s", cfg)
 		}
@@ -57,9 +56,10 @@ func ConfigureZcode(e *Env) {
 		obj["provider"] = providers
 	}
 	if _, exists := providers["2ba"]; exists {
-		e.logf("existing \"2ba\" provider found in %s — leaving it as-is", cfg)
+		e.notef("ZCode — already configured")
 		return
 	}
+	e.backup(cfg)
 	providers["2ba"] = map[string]any{
 		"name": "2ba",
 		"kind": "openai-compatible",
