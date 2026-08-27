@@ -59,7 +59,7 @@ func ConfigureOpencode(e *Env) {
 		obj["provider"] = providers
 	}
 	if _, exists := providers["2ba"]; exists {
-		e.logf("existing \"2ba\" provider found in %s — leaving it as-is", cfg)
+		e.notef("OpenCode — already configured")
 		return
 	}
 	providers["2ba"] = map[string]any{

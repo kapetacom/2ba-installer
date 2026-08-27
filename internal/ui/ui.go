@@ -94,11 +94,16 @@ func DryRun() string {
 	)
 }
 
-// Log renders an event-log line: a green check plus the message.
+// Log renders an event-log line for an action taken: a green check plus the
+// message.
 func Log(msg string) string { return "  " + greenB.Render("✓") + " " + msg }
 
 // Warn renders an event-log line: a yellow bang plus the message.
 func Warn(msg string) string { return "  " + yellowB.Render("!") + " " + msg }
+
+// Note renders an event-log line for a no-op outcome (nothing was changed):
+// dim, no symbol, so it reads quieter than an action.
+func Note(msg string) string { return "  " + dim.Render(msg) }
 
 // Hint renders a dim continuation line under a Log/Warn line.
 func Hint(msg string) string { return "    " + dim.Render(msg) }

@@ -40,7 +40,7 @@ func ConfigureZcode(e *Env) {
 	e.backup(cfg)
 	if e.DryRun {
 		if fileExists(cfg) && hasProvider2ba(cfg) {
-			e.logf("would leave the existing \"2ba\" provider in %s as-is", cfg)
+			e.notef("ZCode — already configured")
 		} else {
 			e.logf("would add 2ba provider to %s", cfg)
 		}
@@ -57,7 +57,7 @@ func ConfigureZcode(e *Env) {
 		obj["provider"] = providers
 	}
 	if _, exists := providers["2ba"]; exists {
-		e.logf("existing \"2ba\" provider found in %s — leaving it as-is", cfg)
+		e.notef("ZCode — already configured")
 		return
 	}
 	providers["2ba"] = map[string]any{

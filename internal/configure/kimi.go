@@ -75,7 +75,7 @@ func (e *Env) configureKimiOne(dir, providerType string) {
 	}
 	mk := kimiModelKey(e.Model)
 	if fileExists(cfg) && (hasExactLine(cfg, "[providers.2ba]") || hasExactLine(cfg, "[models.2ba-"+mk+"]")) {
-		e.logf("existing \"2ba\" entries in %s — leaving it as-is", cfg)
+		e.notef("Kimi — already configured")
 		return
 	}
 	if err := appendBlock(cfg, managedKimiBlock(e, providerType)); err != nil {

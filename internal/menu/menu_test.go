@@ -40,6 +40,14 @@ func TestToggleByNumber(t *testing.T) {
 	if !m.sel[6] {
 		t.Error("7 should toggle zcode on")
 	}
+	m = update(m, keyRunes("8")) // 2ba-code on
+	if !m.sel[7] {
+		t.Error("8 should toggle 2ba-code on")
+	}
+	m = update(m, keyRunes("9")) // claude on
+	if !m.sel[8] {
+		t.Error("9 should toggle claude on")
+	}
 }
 
 func TestArrowsAndSpace(t *testing.T) {
