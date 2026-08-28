@@ -158,6 +158,61 @@ func TestOpencodeMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestOpencodeUpgradesOldEntryWithThinkingConfig(t *testing.T) {
+	home := t.TempDir()
+	ocPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	// exactly what a pre-thinking installer wrote
+	mustWrite(t, ocPath, `{"model": "2ba/amber", "provider": {"2ba": {
+		"npm": "@ai-sdk/openai-compatible", "name": "2ba.ai",
+		"options": {"baseURL": "https://api.2ba.ai/v1", "apiKey": "user-rotated-key"},
+		"models": {"amber": {"name": "Amber (2ba.ai)"}}}}}`)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureOpencode(env)
+
+	oc, _ := os.ReadFile(ocPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(oc, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	two := cfg["provider"].(map[string]any)["2ba"].(map[string]any)
+	m := two["models"].(map[string]any)["amber"].(map[string]any)
+	if m["reasoning"] != true || m["interleaved"] != "reasoning_content" {
+		t.Errorf("thinking fields not added:\n%s", oc)
+	}
+	if m["name"] != "Amber (2ba.ai)" {
+		t.Errorf("model name changed:\n%s", oc)
+	}
+	if opts, _ := two["options"].(map[string]any); opts["apiKey"] != "user-rotated-key" {
+		t.Errorf("user options modified:\n%s", oc)
+	}
+	if cfg["model"] != "2ba/amber" {
+		t.Errorf("default model changed:\n%s", oc)
+	}
+	if !strings.Contains(buf.String(), "thinking config added") {
+		t.Errorf("expected upgrade notice:\n%s", buf.String())
+	}
+}
+
+func TestOpencodeCompleteEntryUntouched(t *testing.T) {
+	home := t.TempDir()
+	ocPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	// user-customized thinking values must survive a re-run
+	existing := `{"provider": {"2ba": {"models": {"amber": {
+		"name": "Amber (2ba.ai)", "reasoning": false, "interleaved": "reasoning"}}}}}`
+	mustWrite(t, ocPath, existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureOpencode(env)
+
+	if got, _ := os.ReadFile(ocPath); string(got) != existing {
+		t.Errorf("complete entry was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
 func TestWindsurfDoesNotStealDefault(t *testing.T) {
 	home := t.TempDir()
 	wsPath := filepath.Join(home, ".codeium", "windsurf", "model_config.json")
@@ -335,6 +390,62 @@ func TestZcodeExisting2baUntouched(t *testing.T) {
 
 	if got, _ := os.ReadFile(zcfg); string(got) != existing {
 		t.Errorf("existing 2ba provider was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+func TestZcodeUpgradesOldEntryWithReasoningConfig(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	// exactly what a pre-reasoning installer wrote
+	mustWrite(t, zcfg, `{"provider": {"2ba": {
+		"name": "2ba", "kind": "openai-compatible",
+		"options": {"apiKey": "user-rotated-key", "baseURL": "https://api.2ba.ai/v1", "apiKeyRequired": true},
+		"enabled": true, "source": "custom",
+		"models": {"amber": {
+			"limit": {"context": 131072},
+			"modalities": {"input": ["text"], "output": ["text"]}}}}}}`)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureZcode(env)
+
+	zc, _ := os.ReadFile(zcfg)
+	var cfg map[string]any
+	if err := json.Unmarshal(zc, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	two := cfg["provider"].(map[string]any)["2ba"].(map[string]any)
+	m := two["models"].(map[string]any)["amber"].(map[string]any)
+	r, ok := m["reasoning"].(map[string]any)
+	if !ok || r["enabled"] != true || r["defaultVariant"] != "medium" {
+		t.Errorf("reasoning selector not added:\n%s", zc)
+	}
+	if lim, _ := m["limit"].(map[string]any); lim["context"] != float64(131072) {
+		t.Errorf("user limit modified:\n%s", zc)
+	}
+	if opts, _ := two["options"].(map[string]any); opts["apiKey"] != "user-rotated-key" {
+		t.Errorf("user options modified:\n%s", zc)
+	}
+	if !strings.Contains(buf.String(), "reasoning config added") {
+		t.Errorf("expected upgrade notice:\n%s", buf.String())
+	}
+}
+
+func TestZcodeCompleteEntryUntouched(t *testing.T) {
+	home := t.TempDir()
+	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+	// user-customized reasoning must survive a re-run
+	existing := `{"provider": {"2ba": {"models": {"amber": {
+		"reasoning": {"enabled": false, "variants": ["low"], "defaultVariant": "low"}}}}}}`
+	mustWrite(t, zcfg, existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureZcode(env)
+
+	if got, _ := os.ReadFile(zcfg); string(got) != existing {
+		t.Errorf("complete entry was modified:\n%s", got)
 	}
 	if !strings.Contains(buf.String(), "already configured") {
 		t.Errorf("expected leave-as-is notice:\n%s", buf.String())

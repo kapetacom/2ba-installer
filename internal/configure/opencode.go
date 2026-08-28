@@ -36,16 +36,55 @@ func loadJSONObject(path string, obj *map[string]any) (exists, ok bool) {
 	return true, true
 }
 
+// opencodeModel returns the model entry the installer writes for model: a
+// friendly name plus the thinking-model declaration. 2ba streams thinking
+// as reasoning_content (no middleware mirror, by decision), which is what
+// "interleaved" tells OpenCode to read.
+func opencodeModel(model string) map[string]any {
+	return map[string]any{
+		"name":        pyCapitalize(model) + " (2ba.ai)",
+		"reasoning":   true,
+		"interleaved": "reasoning_content",
+	}
+}
+
+// patchOpencodeThinking adds the thinking-model fields to the model entry
+// of an existing "2ba" provider when they are missing — the upgrade path
+// for configs written by an older installer. Existing values are never
+// overwritten, and an entry without our model (user-managed) is left
+// alone. It reports whether the config changed.
+func patchOpencodeThinking(provider any, model string) bool {
+	p, ok := provider.(map[string]any)
+	if !ok {
+		return false
+	}
+	models, ok := p["models"].(map[string]any)
+	if !ok {
+		return false
+	}
+	m, ok := models[model].(map[string]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	if _, ok := m["reasoning"]; !ok {
+		m["reasoning"] = true
+		changed = true
+	}
+	if _, ok := m["interleaved"]; !ok {
+		m["interleaved"] = "reasoning_content"
+		changed = true
+	}
+	return changed
+}
+
 // ConfigureOpencode adds a "2ba" OpenAI-compatible provider to opencode.json
-// and sets it as the default model if none is set.
+// and sets it as the default model if none is set. An existing "2ba" entry
+// from an older installer is upgraded in place with the thinking-model
+// fields instead of being skipped.
 func ConfigureOpencode(e *Env) {
 	cfg := filepath.Join(xdgConfig(), "opencode", "opencode.json")
 	if !dirExists(filepath.Dir(cfg)) {
-		return
-	}
-	e.backup(cfg)
-	if e.DryRun {
-		e.logf("would add provider \"2ba\" to %s", cfg)
 		return
 	}
 	obj := map[string]any{}
@@ -58,10 +97,28 @@ func ConfigureOpencode(e *Env) {
 		providers = map[string]any{}
 		obj["provider"] = providers
 	}
-	if _, exists := providers["2ba"]; exists {
-		e.notef("OpenCode — already configured")
+	if existing, exists := providers["2ba"]; exists {
+		if !patchOpencodeThinking(existing, e.Model) {
+			e.notef("OpenCode — already configured")
+			return
+		}
+		if e.DryRun {
+			e.logf("would add thinking config to the existing \"2ba\" provider in %s", cfg)
+			return
+		}
+		e.backup(cfg)
+		if err := writeIndentedJSON(cfg, obj); err != nil {
+			e.warnf("could not write %s: %v", cfg, err)
+			return
+		}
+		e.logf("OpenCode: thinking config added to the existing \"2ba\" provider (%s)", cfg)
 		return
 	}
+	if e.DryRun {
+		e.logf("would add provider \"2ba\" to %s", cfg)
+		return
+	}
+	e.backup(cfg)
 	providers["2ba"] = map[string]any{
 		"npm":  "@ai-sdk/openai-compatible",
 		"name": "2ba.ai",
@@ -70,14 +127,7 @@ func ConfigureOpencode(e *Env) {
 			"apiKey":  e.APIKey,
 		},
 		"models": map[string]any{
-			e.Model: map[string]any{
-				"name": pyCapitalize(e.Model) + " (2ba.ai)",
-				// Declare amber as a thinking model so OpenCode renders the
-				// reasoning stream; 2ba emits thinking as reasoning_content
-				// (no middleware mirror, by decision).
-				"reasoning":   true,
-				"interleaved": "reasoning_content",
-			},
+			e.Model: opencodeModel(e.Model),
 		},
 	}
 	if _, hasModel := obj["model"]; !hasModel {
