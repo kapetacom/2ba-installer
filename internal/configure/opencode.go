@@ -70,7 +70,14 @@ func ConfigureOpencode(e *Env) {
 			"apiKey":  e.APIKey,
 		},
 		"models": map[string]any{
-			e.Model: map[string]any{"name": pyCapitalize(e.Model) + " (2ba.ai)"},
+			e.Model: map[string]any{
+				"name": pyCapitalize(e.Model) + " (2ba.ai)",
+				// Declare amber as a thinking model so OpenCode renders the
+				// reasoning stream; 2ba emits thinking as reasoning_content
+				// (no middleware mirror, by decision).
+				"reasoning":   true,
+				"interleaved": "reasoning_content",
+			},
 		},
 	}
 	if _, hasModel := obj["model"]; !hasModel {

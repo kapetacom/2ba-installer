@@ -74,6 +74,14 @@ func ConfigureZcode(e *Env) {
 			e.Model: map[string]any{
 				"limit":      map[string]any{"context": zcodeContextSize},
 				"modalities": map[string]any{"input": []string{"text"}, "output": []string{"text"}},
+				// Surface the effort selector in ZCode's UI. The variant
+				// strings are sent as reasoning_effort, which the amber
+				// backend accepts (high aliases to its top tier).
+				"reasoning": map[string]any{
+					"enabled":        true,
+					"variants":       []string{"low", "medium", "high"},
+					"defaultVariant": "medium",
+				},
 			},
 		},
 	}
