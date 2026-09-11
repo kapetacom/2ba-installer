@@ -31,6 +31,10 @@ func kimiModelKey(model string) string {
 // the end of a file regardless of what precedes it. It never sets
 // default_model (a top-level key=value would silently belong to the last
 // opened table); the model is picked with `kimi -m` or /model.
+//
+// Kimi matches model capabilities (thinking, vision, tool use) by model-name
+// prefix, and "amber" matches none of them — without the explicit
+// capabilities array the model runs as a plain non-thinking text model.
 func managedKimiBlock(e *Env, providerType string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, BlockBegin)
@@ -43,6 +47,7 @@ func managedKimiBlock(e *Env, providerType string) string {
 	b.WriteString("provider = \"2ba\"\n")
 	fmt.Fprintf(&b, "model = %q\n", e.Model)
 	fmt.Fprintf(&b, "max_context_size = %d\n", kimiContextSize)
+	b.WriteString("capabilities = [\"thinking\", \"image_in\", \"tool_use\"]\n")
 	fmt.Fprintln(&b, BlockEnd)
 	return b.String()
 }
