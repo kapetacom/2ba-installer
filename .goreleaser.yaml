@@ -35,3 +35,20 @@ archives:
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
+
+# Release notes: commits grouped by conventional-commit type, merge commits
+# dropped, oldest first within each group.
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge pull request"
+  groups:
+    - title: Features
+      regexp: "^feat"
+      order: 0
+    - title: Bug fixes
+      regexp: "^fix"
+      order: 1
+    - title: Others
+      order: 999
