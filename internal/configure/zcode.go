@@ -68,14 +68,16 @@ func patchZcodeModel(provider any, model string) bool {
 		m["reasoning"] = zcodeReasoning()
 		changed = true
 	}
-	mods, _ := m["modalities"].(map[string]any)
-	if mods == nil {
+	if raw, exists := m["modalities"]; !exists {
 		m["modalities"] = zcodeModalities()
 		changed = true
-	} else if input, _ := mods["input"].([]any); len(input) == 1 && input[0] == "text" {
-		// exactly what a pre-vision installer wrote
-		mods["input"] = []string{"text", "image"}
-		changed = true
+	} else if mods, ok := raw.(map[string]any); ok {
+		// an input list of exactly ["text"] is what a pre-vision installer
+		// wrote; an explicit null or non-object is a user value we leave alone
+		if input, _ := mods["input"].([]any); len(input) == 1 && input[0] == "text" {
+			mods["input"] = []string{"text", "image"}
+			changed = true
+		}
 	}
 	return changed
 }

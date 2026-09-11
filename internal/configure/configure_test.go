@@ -477,6 +477,32 @@ func TestZcodeCompleteEntryUntouched(t *testing.T) {
 	}
 }
 
+func TestZcodeUserModalitiesValuesUntouched(t *testing.T) {
+	// an explicit null or a non-object is a user value too: the upgrade must
+	// not replace it with our declaration, only widen our own old shape
+	for name, val := range map[string]string{
+		"explicit null": `null`,
+		"non-object":    `"text"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
+			existing := `{"provider": {"2ba": {"models": {"amber": {"reasoning": {"enabled": true}, "modalities": ` + val + `}}}}}`
+			mustWrite(t, zcfg, existing)
+			env, buf := newEnv(t, home, "amber", "k", false)
+
+			ConfigureZcode(env)
+
+			if got, _ := os.ReadFile(zcfg); string(got) != existing {
+				t.Errorf("user modalities value replaced:\n%s", got)
+			}
+			if !strings.Contains(buf.String(), "already configured") {
+				t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+			}
+		})
+	}
+}
+
 func TestZcodeNoHomeDir(t *testing.T) {
 	home := t.TempDir()
 	// Keep zcode off PATH so the "not detected" branch is taken even on a
@@ -742,6 +768,33 @@ func TestTwocodeUpgradesOldEntryWithThinkingLevels(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "thinking levels added") {
 		t.Errorf("expected upgrade notice:\n%s", buf.String())
+	}
+}
+
+func TestTwocodePartiallyDeclaredEntryUntouched(t *testing.T) {
+	// a value on either thinking key marks the entry user-managed: backfilling
+	// the other could produce a default that is not among the levels, which
+	// the desktop rejects the whole store for
+	for name, models := range map[string]string{
+		"levels without default": `[{"modelId":"amber","thinkingLevels":["off","low"]}]`,
+		"default without levels": `[{"modelId":"amber","defaultThinkingLevel":"low"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"k","models":` + models + `,"createdAt":1,"updatedAt":1}`
+			seed := `{"schemaVersion":2,"providers":[` + ours + `]}`
+			mustWrite(t, twocodeFile(home), seed)
+			env, buf := newEnv(t, home, "amber", "k", false)
+
+			ConfigureTwocode(env)
+
+			if got, _ := os.ReadFile(twocodeFile(home)); string(got) != seed {
+				t.Errorf("partially declared entry modified:\n%s", got)
+			}
+			if !strings.Contains(buf.String(), "already configured") {
+				t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+			}
+		})
 	}
 }
 

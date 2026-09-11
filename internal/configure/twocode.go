@@ -222,8 +222,10 @@ func ConfigureTwocode(e *Env) {
 
 // patchTwocodeThinking adds the thinking levels to the amber model entries
 // of providers pointing at base — the upgrade path for stores written by an
-// older installer. Entries that already declare levels and models other than
-// ours are left alone. It reports whether the store changed.
+// older installer. Both fields go in as one unit: the desktop rejects a
+// default that is not among the levels, so a value on either key marks the
+// entry user-managed and the whole entry is left alone, as are models other
+// than ours. It reports whether the store changed.
 func patchTwocodeThinking(providers []any, base, model string) bool {
 	changed := false
 	for _, p := range providers {
@@ -237,7 +239,9 @@ func patchTwocodeThinking(providers []any, base, model string) bool {
 			if !ok || m["modelId"] != model {
 				continue
 			}
-			if _, ok := m["thinkingLevels"]; !ok {
+			_, hasLevels := m["thinkingLevels"]
+			_, hasDefault := m["defaultThinkingLevel"]
+			if !hasLevels && !hasDefault {
 				m["thinkingLevels"] = twocodeThinkingLevels
 				m["defaultThinkingLevel"] = "medium"
 				obj["updatedAt"] = time.Now().UnixMilli()
