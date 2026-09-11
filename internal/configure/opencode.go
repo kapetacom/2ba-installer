@@ -36,24 +36,32 @@ func loadJSONObject(path string, obj *map[string]any) (exists, ok bool) {
 	return true, true
 }
 
+// opencodeModalities is the modalities declaration amber warrants: it takes
+// images on input and emits text only. OpenCode treats a model without this
+// as text-only and refuses image attachments.
+func opencodeModalities() map[string]any {
+	return map[string]any{"input": []string{"text", "image"}, "output": []string{"text"}}
+}
+
 // opencodeModel returns the model entry the installer writes for model: a
-// friendly name plus the thinking-model declaration. 2ba streams thinking
-// as reasoning_content (no middleware mirror, by decision), which is what
-// "interleaved" tells OpenCode to read.
+// friendly name, the thinking-model declaration, and the input modalities.
+// 2ba streams thinking as reasoning_content (no middleware mirror, by
+// decision), which is what "interleaved" tells OpenCode to read.
 func opencodeModel(model string) map[string]any {
 	return map[string]any{
 		"name":        pyCapitalize(model) + " (2ba.ai)",
 		"reasoning":   true,
 		"interleaved": "reasoning_content",
+		"modalities":  opencodeModalities(),
 	}
 }
 
-// patchOpencodeThinking adds the thinking-model fields to the model entry
-// of an existing "2ba" provider when they are missing — the upgrade path
-// for configs written by an older installer. Existing values are never
-// overwritten, and an entry without our model (user-managed) is left
-// alone. It reports whether the config changed.
-func patchOpencodeThinking(provider any, model string) bool {
+// patchOpencodeModel brings the model entry of an existing "2ba" provider up
+// to the current declaration — the upgrade path for configs written by an
+// older installer. Missing thinking and modality fields are added; existing
+// values are never overwritten, and an entry without our model (user-managed)
+// is left alone. It reports whether the config changed.
+func patchOpencodeModel(provider any, model string) bool {
 	p, ok := provider.(map[string]any)
 	if !ok {
 		return false
@@ -75,13 +83,17 @@ func patchOpencodeThinking(provider any, model string) bool {
 		m["interleaved"] = "reasoning_content"
 		changed = true
 	}
+	if _, ok := m["modalities"]; !ok {
+		m["modalities"] = opencodeModalities()
+		changed = true
+	}
 	return changed
 }
 
 // ConfigureOpencode adds a "2ba" OpenAI-compatible provider to opencode.json
 // and sets it as the default model if none is set. An existing "2ba" entry
-// from an older installer is upgraded in place with the thinking-model
-// fields instead of being skipped.
+// from an older installer is upgraded in place with the current model
+// declaration instead of being skipped.
 func ConfigureOpencode(e *Env) {
 	cfg := filepath.Join(xdgConfig(), "opencode", "opencode.json")
 	if !dirExists(filepath.Dir(cfg)) {
@@ -98,12 +110,12 @@ func ConfigureOpencode(e *Env) {
 		obj["provider"] = providers
 	}
 	if existing, exists := providers["2ba"]; exists {
-		if !patchOpencodeThinking(existing, e.Model) {
+		if !patchOpencodeModel(existing, e.Model) {
 			e.notef("OpenCode — already configured")
 			return
 		}
 		if e.DryRun {
-			e.logf("would add thinking config to the existing \"2ba\" provider in %s", cfg)
+			e.logf("would add model capabilities to the existing \"2ba\" provider in %s", cfg)
 			return
 		}
 		e.backup(cfg)
@@ -111,7 +123,7 @@ func ConfigureOpencode(e *Env) {
 			e.warnf("could not write %s: %v", cfg, err)
 			return
 		}
-		e.logf("OpenCode: thinking config added to the existing \"2ba\" provider (%s)", cfg)
+		e.logf("OpenCode: model capabilities added to the existing \"2ba\" provider (%s)", cfg)
 		return
 	}
 	if e.DryRun {

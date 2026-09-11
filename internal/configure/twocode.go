@@ -29,6 +29,11 @@ const twocodeSchemaVersion = 2
 // twocodeMaxProviders mirrors the desktop's MAXIMUM_PROVIDER_COUNT.
 const twocodeMaxProviders = 25
 
+// twocodeThinkingLevels declares amber a thinking model in the desktop's
+// selector. The store is rejected unless "off" is among the levels; the
+// other tiers match the reasoning_effort values the amber backend accepts.
+var twocodeThinkingLevels = []any{"off", "low", "medium", "high"}
+
 // TwocodeDataDir returns the 2ba-code desktop profile directory, mirroring
 // the app's own lookup: $TWOBA_DATA_DIR, then the platform application-data
 // directory. It is the single source of truth for this path; the detect
@@ -106,9 +111,10 @@ func newTwocodeProviderID() (string, error) {
 
 // ConfigureTwocode adds a "2ba" custom provider to the 2ba-code desktop's
 // custom-model-providers.json. An existing provider pointing at the same
-// base is left untouched, and the store is handled as generic JSON so every
-// field of the other entries — including ones this installer does not know
-// about — survives the rewrite.
+// base is upgraded in place with the thinking-level fields when they are
+// missing, and the store is handled as generic JSON so every field of the
+// other entries — including ones this installer does not know about —
+// survives the rewrite.
 func ConfigureTwocode(e *Env) {
 	dataDir := TwocodeDataDir()
 	if !dirExists(dataDir) {
@@ -152,7 +158,20 @@ func ConfigureTwocode(e *Env) {
 	}
 
 	if twocodeProvidersHaveBase(providers, trimAPIBase(e.APIBase)) {
-		e.notef("2ba-code — already configured")
+		if !patchTwocodeThinking(providers, trimAPIBase(e.APIBase), e.Model) {
+			e.notef("2ba-code — already configured")
+			return
+		}
+		if e.DryRun {
+			e.logf("would add thinking levels to the existing 2ba provider in %s", file)
+			return
+		}
+		e.backup(file)
+		if err := writeIndentedJSON(file, root); err != nil {
+			e.warnf("could not write %s: %v", file, err)
+			return
+		}
+		e.logf("2ba-code: thinking levels added to the existing 2ba provider (%s)", file)
 		return
 	}
 	if len(providers) >= twocodeMaxProviders {
@@ -176,9 +195,14 @@ func ConfigureTwocode(e *Env) {
 		"apiFormat":  "openai-chat-completions",
 		"baseURL":    trimAPIBase(e.APIBase),
 		"apiKey":     e.APIKey,
-		"models":     []any{map[string]any{"modelId": e.Model, "contextWindow": zcodeContextSize}},
-		"createdAt":  now,
-		"updatedAt":  now,
+		"models": []any{map[string]any{
+			"modelId":              e.Model,
+			"contextWindow":        zcodeContextSize,
+			"thinkingLevels":       twocodeThinkingLevels,
+			"defaultThinkingLevel": "medium",
+		}},
+		"createdAt": now,
+		"updatedAt": now,
 	})
 	e.backup(file)
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
@@ -194,6 +218,34 @@ func ConfigureTwocode(e *Env) {
 		return
 	}
 	e.logf("2ba-code: provider \"2ba\" added, model %s (%s)", e.Model, file)
+}
+
+// patchTwocodeThinking adds the thinking levels to the amber model entries
+// of providers pointing at base — the upgrade path for stores written by an
+// older installer. Entries that already declare levels and models other than
+// ours are left alone. It reports whether the store changed.
+func patchTwocodeThinking(providers []any, base, model string) bool {
+	changed := false
+	for _, p := range providers {
+		obj, _ := p.(map[string]any)
+		if obj == nil || twocodeProviderBase(p) != base {
+			continue
+		}
+		models, _ := obj["models"].([]any)
+		for _, entry := range models {
+			m, ok := entry.(map[string]any)
+			if !ok || m["modelId"] != model {
+				continue
+			}
+			if _, ok := m["thinkingLevels"]; !ok {
+				m["thinkingLevels"] = twocodeThinkingLevels
+				m["defaultThinkingLevel"] = "medium"
+				obj["updatedAt"] = time.Now().UnixMilli()
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // twocodeStoreHasBase reports whether file holds at least one provider whose

@@ -28,22 +28,29 @@ func zcodeReasoning() map[string]any {
 	}
 }
 
+// zcodeModalities is the modalities declaration amber warrants: it takes
+// images on input and emits text only. ZCode hides image attach behind this.
+func zcodeModalities() map[string]any {
+	return map[string]any{"input": []string{"text", "image"}, "output": []string{"text"}}
+}
+
 // zcodeModel returns the model entry the installer writes: context limit,
 // modalities, and the reasoning selector.
 func zcodeModel() map[string]any {
 	return map[string]any{
 		"limit":      map[string]any{"context": zcodeContextSize},
-		"modalities": map[string]any{"input": []string{"text"}, "output": []string{"text"}},
+		"modalities": zcodeModalities(),
 		"reasoning":  zcodeReasoning(),
 	}
 }
 
-// patchZcodeReasoning adds the reasoning selector to the model entry of an
-// existing "2ba" provider when it is missing — the upgrade path for
-// configs written by an older installer. Existing values are never
-// overwritten, and an entry without our model (user-managed) is left
-// alone. It reports whether the config changed.
-func patchZcodeReasoning(provider any, model string) bool {
+// patchZcodeModel upgrades the model entry of an existing "2ba" provider to
+// the current declaration — the upgrade path for configs written by an older
+// installer. It adds the reasoning selector when missing and widens the
+// installer's old text-only modalities to include images; anything else the
+// user set themselves is left alone, as is an entry without our model
+// (user-managed). It reports whether the config changed.
+func patchZcodeModel(provider any, model string) bool {
 	p, ok := provider.(map[string]any)
 	if !ok {
 		return false
@@ -56,11 +63,21 @@ func patchZcodeReasoning(provider any, model string) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := m["reasoning"]; ok {
-		return false
+	changed := false
+	if _, ok := m["reasoning"]; !ok {
+		m["reasoning"] = zcodeReasoning()
+		changed = true
 	}
-	m["reasoning"] = zcodeReasoning()
-	return true
+	mods, _ := m["modalities"].(map[string]any)
+	if mods == nil {
+		m["modalities"] = zcodeModalities()
+		changed = true
+	} else if input, _ := mods["input"].([]any); len(input) == 1 && input[0] == "text" {
+		// exactly what a pre-vision installer wrote
+		mods["input"] = []string{"text", "image"}
+		changed = true
+	}
+	return changed
 }
 
 // ConfigureZcode adds a "2ba" OpenAI-compatible provider to ZCode's
@@ -68,8 +85,8 @@ func patchZcodeReasoning(provider any, model string) bool {
 // arbitrary strings; the UI just happens to mint UUIDs), so the stable "2ba"
 // key gives us idempotency and a clean uninstall. The entry shape matches what
 // ZCode itself writes for custom providers. An existing "2ba" entry from an
-// older installer is upgraded in place with the reasoning selector instead of
-// being skipped.
+// older installer is upgraded in place with the current model declaration
+// instead of being skipped.
 func ConfigureZcode(e *Env) {
 	zhome := zcodeHome()
 	if !dirExists(zhome) {
@@ -96,12 +113,12 @@ func ConfigureZcode(e *Env) {
 		obj["provider"] = providers
 	}
 	if existing, exists := providers["2ba"]; exists {
-		if !patchZcodeReasoning(existing, e.Model) {
+		if !patchZcodeModel(existing, e.Model) {
 			e.notef("ZCode — already configured")
 			return
 		}
 		if e.DryRun {
-			e.logf("would add reasoning config to the existing \"2ba\" provider in %s", cfg)
+			e.logf("would add model capabilities to the existing \"2ba\" provider in %s", cfg)
 			return
 		}
 		e.backup(cfg)
@@ -109,7 +126,7 @@ func ConfigureZcode(e *Env) {
 			e.warnf("could not write %s: %v", cfg, err)
 			return
 		}
-		e.logf("ZCode: reasoning config added to the existing \"2ba\" provider (%s)", cfg)
+		e.logf("ZCode: model capabilities added to the existing \"2ba\" provider (%s)", cfg)
 		return
 	}
 	if e.DryRun {

@@ -122,6 +122,11 @@ func TestOpencodeAddKeepsUserProvider(t *testing.T) {
 	if cfg["model"] != "2ba/amber" {
 		t.Errorf("default model = %v, want 2ba/amber", cfg["model"])
 	}
+	m := cfg["provider"].(map[string]any)["2ba"].(map[string]any)["models"].(map[string]any)["amber"].(map[string]any)
+	mods, _ := m["modalities"].(map[string]any)
+	if input, _ := mods["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
+		t.Errorf("model must declare image input:\n%s", oc)
+	}
 }
 
 func TestOpencodeExisting2baUntouched(t *testing.T) {
@@ -158,10 +163,10 @@ func TestOpencodeMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestOpencodeUpgradesOldEntryWithThinkingConfig(t *testing.T) {
+func TestOpencodeUpgradesOldEntryWithModelConfig(t *testing.T) {
 	home := t.TempDir()
 	ocPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	// exactly what a pre-thinking installer wrote
+	// exactly what a pre-thinking, pre-vision installer wrote
 	mustWrite(t, ocPath, `{"model": "2ba/amber", "provider": {"2ba": {
 		"npm": "@ai-sdk/openai-compatible", "name": "2ba.ai",
 		"options": {"baseURL": "https://api.2ba.ai/v1", "apiKey": "user-rotated-key"},
@@ -180,6 +185,10 @@ func TestOpencodeUpgradesOldEntryWithThinkingConfig(t *testing.T) {
 	if m["reasoning"] != true || m["interleaved"] != "reasoning_content" {
 		t.Errorf("thinking fields not added:\n%s", oc)
 	}
+	mods, _ := m["modalities"].(map[string]any)
+	if input, _ := mods["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
+		t.Errorf("modalities not added:\n%s", oc)
+	}
 	if m["name"] != "Amber (2ba.ai)" {
 		t.Errorf("model name changed:\n%s", oc)
 	}
@@ -189,7 +198,7 @@ func TestOpencodeUpgradesOldEntryWithThinkingConfig(t *testing.T) {
 	if cfg["model"] != "2ba/amber" {
 		t.Errorf("default model changed:\n%s", oc)
 	}
-	if !strings.Contains(buf.String(), "thinking config added") {
+	if !strings.Contains(buf.String(), "model capabilities added") {
 		t.Errorf("expected upgrade notice:\n%s", buf.String())
 	}
 }
@@ -197,9 +206,10 @@ func TestOpencodeUpgradesOldEntryWithThinkingConfig(t *testing.T) {
 func TestOpencodeCompleteEntryUntouched(t *testing.T) {
 	home := t.TempDir()
 	ocPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	// user-customized thinking values must survive a re-run
+	// user-customized values must survive a re-run
 	existing := `{"provider": {"2ba": {"models": {"amber": {
-		"name": "Amber (2ba.ai)", "reasoning": false, "interleaved": "reasoning"}}}}}`
+		"name": "Amber (2ba.ai)", "reasoning": false, "interleaved": "reasoning",
+		"modalities": {"input": ["text"], "output": ["text"]}}}}}}`
 	mustWrite(t, ocPath, existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 
@@ -260,6 +270,7 @@ func TestKimiAppendBlock(t *testing.T) {
 		`provider = "2ba"`,
 		`model = "amber"`,
 		"max_context_size = 262144",
+		`capabilities = ["thinking", "image_in", "tool_use"]`,
 	} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("kimi config missing %q:\n%s", want, got)
@@ -374,6 +385,11 @@ func TestZcodeAddKeepsUserProvider(t *testing.T) {
 	if _, present := models["amber"]; !present {
 		t.Errorf("model amber missing:\n%s", zc)
 	}
+	m, _ := models["amber"].(map[string]any)
+	mods, _ := m["modalities"].(map[string]any)
+	if input, _ := mods["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
+		t.Errorf("model must declare image input:\n%s", zc)
+	}
 	if st, _ := os.Stat(zcfg); st.Mode().Perm() != 0o600 {
 		t.Errorf("zcode config perms = %v, want 0600", st.Mode().Perm())
 	}
@@ -396,10 +412,10 @@ func TestZcodeExisting2baUntouched(t *testing.T) {
 	}
 }
 
-func TestZcodeUpgradesOldEntryWithReasoningConfig(t *testing.T) {
+func TestZcodeUpgradesOldEntryWithModelConfig(t *testing.T) {
 	home := t.TempDir()
 	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
-	// exactly what a pre-reasoning installer wrote
+	// exactly what a pre-reasoning, pre-vision installer wrote
 	mustWrite(t, zcfg, `{"provider": {"2ba": {
 		"name": "2ba", "kind": "openai-compatible",
 		"options": {"apiKey": "user-rotated-key", "baseURL": "https://api.2ba.ai/v1", "apiKeyRequired": true},
@@ -422,13 +438,20 @@ func TestZcodeUpgradesOldEntryWithReasoningConfig(t *testing.T) {
 	if !ok || r["enabled"] != true || r["defaultVariant"] != "medium" {
 		t.Errorf("reasoning selector not added:\n%s", zc)
 	}
+	mods, _ := m["modalities"].(map[string]any)
+	if input, _ := mods["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
+		t.Errorf("text-only input modalities not widened:\n%s", zc)
+	}
+	if out, _ := mods["output"].([]any); len(out) != 1 || out[0] != "text" {
+		t.Errorf("output modalities changed:\n%s", zc)
+	}
 	if lim, _ := m["limit"].(map[string]any); lim["context"] != float64(131072) {
 		t.Errorf("user limit modified:\n%s", zc)
 	}
 	if opts, _ := two["options"].(map[string]any); opts["apiKey"] != "user-rotated-key" {
 		t.Errorf("user options modified:\n%s", zc)
 	}
-	if !strings.Contains(buf.String(), "reasoning config added") {
+	if !strings.Contains(buf.String(), "model capabilities added") {
 		t.Errorf("expected upgrade notice:\n%s", buf.String())
 	}
 }
@@ -436,9 +459,11 @@ func TestZcodeUpgradesOldEntryWithReasoningConfig(t *testing.T) {
 func TestZcodeCompleteEntryUntouched(t *testing.T) {
 	home := t.TempDir()
 	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
-	// user-customized reasoning must survive a re-run
+	// user-customized reasoning and modalities must survive a re-run; the
+	// input list already declares the current shape, so nothing is widened
 	existing := `{"provider": {"2ba": {"models": {"amber": {
-		"reasoning": {"enabled": false, "variants": ["low"], "defaultVariant": "low"}}}}}}`
+		"reasoning": {"enabled": false, "variants": ["low"], "defaultVariant": "low"},
+		"modalities": {"input": ["text", "image"], "output": ["text", "image"]}}}}}}`
 	mustWrite(t, zcfg, existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 
@@ -551,8 +576,10 @@ func TestTwocodeAddCreatesFile(t *testing.T) {
 			BaseURL    string `json:"baseURL"`
 			APIKey     string `json:"apiKey"`
 			Models     []struct {
-				ModelID       string `json:"modelId"`
-				ContextWindow int    `json:"contextWindow"`
+				ModelID              string   `json:"modelId"`
+				ContextWindow        int      `json:"contextWindow"`
+				ThinkingLevels       []string `json:"thinkingLevels"`
+				DefaultThinkingLevel string   `json:"defaultThinkingLevel"`
 			} `json:"models"`
 			CreatedAt int64 `json:"createdAt"`
 			UpdatedAt int64 `json:"updatedAt"`
@@ -573,6 +600,13 @@ func TestTwocodeAddCreatesFile(t *testing.T) {
 	}
 	if len(p.Models) != 1 || p.Models[0].ModelID != "amber" || p.Models[0].ContextWindow != 262144 {
 		t.Errorf("model entry wrong:\n%s", data)
+	}
+	// "off" is mandatory — the desktop rejects the whole store without it
+	if got := p.Models[0].ThinkingLevels; len(got) != 4 || got[0] != "off" || got[3] != "high" {
+		t.Errorf("thinking levels = %v, want [off low medium high]:\n%s", got, data)
+	}
+	if p.Models[0].DefaultThinkingLevel != "medium" {
+		t.Errorf("default thinking level = %q, want medium:\n%s", p.Models[0].DefaultThinkingLevel, data)
 	}
 	if p.CreatedAt <= 0 || p.UpdatedAt <= 0 {
 		t.Errorf("timestamps missing:\n%s", data)
@@ -657,6 +691,60 @@ func TestTwocodeExisting2baUntouched(t *testing.T) {
 	}
 }
 
+func TestTwocodeUpgradesOldEntryWithThinkingLevels(t *testing.T) {
+	home := t.TempDir()
+	// exactly what a pre-thinking installer wrote: our base, our model, no levels
+	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"user-rotated-key","models":[{"modelId":"amber","contextWindow":131072}],"createdAt":1,"updatedAt":1}`
+	seed := `{"schemaVersion":2,"providers":[` + twocodeUserProvider + `,` + ours + `]}`
+	mustWrite(t, twocodeFile(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureTwocode(env)
+
+	data, err := os.ReadFile(twocodeFile(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Providers []struct {
+			Label  string `json:"label"`
+			APIKey string `json:"apiKey"`
+			Models []struct {
+				ModelID              string   `json:"modelId"`
+				ThinkingLevels       []string `json:"thinkingLevels"`
+				DefaultThinkingLevel string   `json:"defaultThinkingLevel"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	if len(root.Providers) != 2 {
+		t.Fatalf("provider count changed:\n%s", data)
+	}
+	for _, p := range root.Providers {
+		switch p.Label {
+		case "OpenRouter":
+			if p.Models[0].ThinkingLevels != nil {
+				t.Errorf("user provider modified:\n%s", data)
+			}
+		case "2ba":
+			if p.APIKey != "user-rotated-key" {
+				t.Errorf("user options modified:\n%s", data)
+			}
+			if got := p.Models[0].ThinkingLevels; len(got) != 4 || got[0] != "off" {
+				t.Errorf("thinking levels not added: %v\n%s", got, data)
+			}
+			if p.Models[0].DefaultThinkingLevel != "medium" {
+				t.Errorf("default thinking level not added:\n%s", data)
+			}
+		}
+	}
+	if !strings.Contains(buf.String(), "thinking levels added") {
+		t.Errorf("expected upgrade notice:\n%s", buf.String())
+	}
+}
+
 func TestTwocodeNoProfileDir(t *testing.T) {
 	home := t.TempDir()
 	env, buf := newEnv(t, home, "amber", "k", false)
@@ -714,7 +802,8 @@ func TestTwocodeDryRun(t *testing.T) {
 
 func TestTwocodeDryRunExisting(t *testing.T) {
 	home := t.TempDir()
-	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"k","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}`
+	// a complete entry: dry-run must treat it as configured, not upgradable
+	ours := `{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"` + testBase + `","apiKey":"k","models":[{"modelId":"amber","thinkingLevels":["off","low","medium","high"],"defaultThinkingLevel":"medium"}],"createdAt":1,"updatedAt":1}`
 	seed := `{"schemaVersion":2,"providers":[` + ours + `]}`
 	mustWrite(t, twocodeFile(home), seed)
 	env, buf := newEnv(t, home, "amber", "k", true)
@@ -862,7 +951,7 @@ func TestNoBackupOnNoOp(t *testing.T) {
 	zcfg := filepath.Join(home, ".zcode", "v2", "config.json")
 	mustWrite(t, zcfg, `{"provider": {"2ba": {"name": "2ba"}}}`)
 	twc := twocodeFile(home)
-	mustWrite(t, twc, `{"schemaVersion":2,"providers":[{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"`+testBase+`","apiKey":"old","models":[{"modelId":"amber"}],"createdAt":1,"updatedAt":1}]}`)
+	mustWrite(t, twc, `{"schemaVersion":2,"providers":[{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"`+testBase+`","apiKey":"old","models":[{"modelId":"amber","thinkingLevels":["off","low","medium","high"],"defaultThinkingLevel":"medium"}],"createdAt":1,"updatedAt":1}]}`)
 	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`)
 
 	env, buf := newEnv(t, home, "amber", "k", false)
