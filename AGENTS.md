@@ -36,16 +36,21 @@ API key, and configures local coding tools to use 2ba as their model provider.
    conventional-commit type.
 3. **Always create a Discord announcement for the release** and post it to the
    2ba Discord channel once the release workflow has finished. Only
-   user-visible changes belong in the post (no CI/internal work). Follow the
-   established format:
+   user-visible changes belong in the post (no CI/internal work). Use
+   Discord-compatible Markdown — `-` bullets, `**bold**`, `` `inline code` ``
+   and fenced code blocks; no tables, no HTML. Follow the established format:
 
-   ```
+   ````
    2ba installer vX.Y.Z is out 🎉
    {one-line hook: what this release is about}
-   {bullets, one per tool/area: "Tool — what changed for the user"}
+
+   - **{Tool}** — what changed for the user
+   - **{Tool}** — what changed for the user
 
    New here? Install:
+   ```
    curl -fsSL https://2ba.ai/install.sh | sh
+   ```
 
    Already installed? Re-run the same command — it upgrades your existing configs in place, nothing to clean up.
-   ```
+   ````
