@@ -25,6 +25,10 @@ func removeJSONEntry(path, key string) error {
 	if providers, ok := obj["provider"].(map[string]any); ok {
 		delete(providers, key)
 	}
+	// Pi's models.json uses the plural "providers" map.
+	if providers, ok := obj["providers"].(map[string]any); ok {
+		delete(providers, key)
+	}
 	if m, ok := obj["model"].(string); ok && strings.HasPrefix(m, key+"/") {
 		delete(obj, "model")
 	}
@@ -55,11 +59,12 @@ func Uninstall(e *Env) {
 		}
 	}
 
-	// agent JSON configs (opencode + windsurf + zcode)
+	// agent JSON configs (opencode + windsurf + zcode + pi)
 	for _, cfg := range []string{
 		filepath.Join(xdgConfig(), "opencode", "opencode.json"),
 		filepath.Join(home(), ".codeium", "windsurf", "model_config.json"),
 		filepath.Join(zcodeHome(), "v2", "config.json"),
+		piModelsFile(),
 	} {
 		if !fileExists(cfg) {
 			continue

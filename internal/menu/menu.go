@@ -28,7 +28,7 @@ var (
 // 2ba-code is a supported service (Selections.Twocode, --services 2ba-code)
 // but is intentionally not a row: it is not offered in the picker yet.
 var (
-	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude"}
+	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude", "pi"}
 	descs = []string{
 		"OPENAI_API_KEY/BASE for aider & similar tools",
 		"OpenCode CLI (~/.config/opencode)",
@@ -38,17 +38,18 @@ var (
 		"Cursor (prints manual steps)",
 		"ZCode CLI / desktop (~/.zcode)",
 		"Claude Code (~/.claude)",
+		"Pi coding agent (~/.pi/agent)",
 	}
 )
 
 // Selections is the user's pick, in menu order.
 type Selections struct {
-	Shell, Opencode, Windsurf, Kimi, Continue, Cursor, Zcode, Twocode, Claude bool
+	Shell, Opencode, Windsurf, Kimi, Continue, Cursor, Zcode, Twocode, Claude, Pi bool
 }
 
 // Any reports whether at least one service is selected.
 func (s Selections) Any() bool {
-	return s.Shell || s.Opencode || s.Windsurf || s.Kimi || s.Continue || s.Cursor || s.Zcode || s.Twocode || s.Claude
+	return s.Shell || s.Opencode || s.Windsurf || s.Kimi || s.Continue || s.Cursor || s.Zcode || s.Twocode || s.Claude || s.Pi
 }
 
 // Result is what Run returns after the menu closes.
@@ -58,7 +59,7 @@ type Result struct {
 }
 
 type model struct {
-	sel      [8]bool
+	sel      [9]bool
 	cursor   int
 	quitting bool
 }
@@ -67,17 +68,17 @@ type model struct {
 // row (see names), so its detection pre-tick is dropped here.
 func New(initial detect.Services) model {
 	return model{
-		sel: [8]bool{
+		sel: [9]bool{
 			initial.Shell, initial.Opencode, initial.Windsurf,
 			initial.Kimi, initial.Continue, initial.Cursor,
-			initial.Zcode, initial.Claude,
+			initial.Zcode, initial.Claude, initial.Pi,
 		},
 	}
 }
 
 func (m model) Init() tea.Cmd { return nil }
 
-// Update handles keys: up/down move, space or 1-8 toggle, a selects all,
+// Update handles keys: up/down move, space or 1-9 toggle, a selects all,
 // enter confirms, q quits. It mirrors the historical install.sh key map.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -102,7 +103,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8":
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			if i := int(msg.String()[0] - '1'); i >= 0 && i < len(names) {
 				m.sel[i] = !m.sel[i]
 			}
@@ -129,7 +130,7 @@ func (m model) View() string {
 		b.WriteString("    " + cursor + " " + mark + " " + label + padRight(name, 12) + " " + descs[i] + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("  " + dim.Render("up/down move · space toggle · 1-8 toggle · a all · enter continue · q quit") + "\n")
+	b.WriteString("  " + dim.Render("up/down move · space toggle · 1-9 toggle · a all · enter continue · q quit") + "\n")
 	return b.String()
 }
 
@@ -151,7 +152,7 @@ func Run(stdin io.Reader, stdout io.Writer) (Result, error) {
 		Selections: Selections{
 			Shell: final.sel[0], Opencode: final.sel[1], Windsurf: final.sel[2],
 			Kimi: final.sel[3], Continue: final.sel[4], Cursor: final.sel[5],
-			Zcode: final.sel[6], Claude: final.sel[7],
+			Zcode: final.sel[6], Claude: final.sel[7], Pi: final.sel[8],
 			// Twocode has no row in the menu yet; it is only ever selected
 			// through --services 2ba-code.
 		},

@@ -73,7 +73,7 @@ func main() {
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "print the plan without touching anything")
 	fs.BoolVar(&opts.uninstall, "uninstall", false, "remove everything the installer manages")
 	fs.BoolVar(&opts.yes, "yes", false, "non-interactive: accept all defaults")
-	fs.StringVar(&opts.services, "services", "", "services to configure: shell,opencode,windsurf,kimi,continue,cursor,zcode,2ba-code,claude")
+	fs.StringVar(&opts.services, "services", "", "services to configure: shell,opencode,windsurf,kimi,continue,cursor,zcode,2ba-code,claude,pi")
 	fs.StringVar(&opts.model, "model", defaultModel, "model to configure")
 	fs.StringVar(&opts.apiBase, "api-base", defaultBase, "API base URL override")
 	fs.StringVar(&opts.apiOrigin, "api-origin", "", "pairing/website origin override, e.g. http://localhost:8080")
@@ -241,6 +241,9 @@ func main() {
 	if sel.Claude {
 		configure.ConfigureClaude(env)
 	}
+	if sel.Pi {
+		configure.ConfigurePi(env)
+	}
 
 	fmt.Println()
 	if opts.dryRun {
@@ -263,7 +266,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --dry-run        print the plan without touching anything")
 	fmt.Fprintln(os.Stderr, "  --uninstall      remove everything this binary manages")
 	fmt.Fprintln(os.Stderr, "  --services LIST  services to configure: shell,opencode,windsurf,kimi,")
-	fmt.Fprintln(os.Stderr, "                   continue,cursor,zcode,2ba-code,claude (default: all detected)")
+	fmt.Fprintln(os.Stderr, "                   continue,cursor,zcode,2ba-code,claude,pi (default: all detected)")
 	fmt.Fprintf(os.Stderr, "  --model NAME     model to configure (default: %s)\n", defaultModel)
 	fmt.Fprintf(os.Stderr, "  --api-base URL   API base URL override (default: %s)\n", defaultBase)
 	fmt.Fprintln(os.Stderr, "  --api-origin URL pairing/website origin override, e.g. http://localhost:8080")
@@ -331,9 +334,9 @@ func parseServices(s string) ([]string, error) {
 			name = "shell"
 		}
 		switch name {
-		case "shell", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "2ba-code", "claude":
+		case "shell", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "2ba-code", "claude", "pi":
 		default:
-			return nil, fmt.Errorf("unknown service '%s' — valid: shell,opencode,windsurf,kimi,continue,cursor,zcode,2ba-code,claude", tok)
+			return nil, fmt.Errorf("unknown service '%s' — valid: shell,opencode,windsurf,kimi,continue,cursor,zcode,2ba-code,claude,pi", tok)
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -365,6 +368,8 @@ func fromServiceList(names []string) menu.Selections {
 			s.Twocode = true
 		case "claude":
 			s.Claude = true
+		case "pi":
+			s.Pi = true
 		}
 	}
 	return s
@@ -375,7 +380,7 @@ func fromDetect() menu.Selections {
 	return menu.Selections{
 		Shell: d.Shell, Opencode: d.Opencode, Windsurf: d.Windsurf,
 		Kimi: d.Kimi, Continue: d.Continue, Cursor: d.Cursor,
-		Zcode: d.Zcode, Claude: d.Claude,
+		Zcode: d.Zcode, Claude: d.Claude, Pi: d.Pi,
 		// 2ba-code is not offered yet: it is configured only via
 		// --services 2ba-code, never auto-selected.
 	}
@@ -410,6 +415,9 @@ func summary(s menu.Selections) string {
 	}
 	if s.Claude {
 		parts = append(parts, "claude")
+	}
+	if s.Pi {
+		parts = append(parts, "pi")
 	}
 	return strings.Join(parts, ", ")
 }
