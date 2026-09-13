@@ -36,7 +36,11 @@ API key, and configures local coding tools to use 2ba as their model provider.
    conventional-commit type.
 3. **Always create a Discord announcement for the release** and post it to the
    2ba Discord channel once the release workflow has finished. Only
-   user-visible changes belong in the post (no CI/internal work). Use
+   user-visible changes belong in the post (no CI/internal work), and it
+   should read for users, not developers: focus on the features and bug
+   fixes in plain language — what users can now do — not on how the
+   installer works (no config paths, env vars, or implementation details
+   unless a user actually needs them). Use
    Discord-compatible Markdown — `-` bullets, `**bold**`, `` `inline code` ``
    and fenced code blocks; no tables, no HTML. Follow the established format:
 
