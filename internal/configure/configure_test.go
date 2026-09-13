@@ -1007,7 +1007,7 @@ func TestNoBackupOnNoOp(t *testing.T) {
 	twc := twocodeFile(home)
 	mustWrite(t, twc, `{"schemaVersion":2,"providers":[{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"`+testBase+`","apiKey":"old","models":[{"modelId":"amber","thinkingLevels":["off","low","medium","high"],"defaultThinkingLevel":"medium"}],"createdAt":1,"updatedAt":1}]}`)
 	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`)
-	mustWrite(t, piModels(home), `{"providers":{"2ba":{"baseUrl":"`+testBase+`","api":"openai-completions","apiKey":"old","models":[{"id":"amber","name":"Amber (2ba.ai)","reasoning":true,"input":["text","image"],"contextWindow":262144}]}}}`)
+	mustWrite(t, piModels(home), `{"providers":{"2ba":{"baseUrl":"`+testBase+`","api":"openai-completions","apiKey":"old","compat":{"supportsDeveloperRole":false},"models":[{"id":"amber","name":"Amber (2ba.ai)","reasoning":true,"input":["text","image"],"contextWindow":262144}]}}}`)
 
 	env, buf := newEnv(t, home, "amber", "k", false)
 	ConfigureZcode(env)
@@ -1064,7 +1064,10 @@ func TestPiAddCreatesFile(t *testing.T) {
 			BaseURL string `json:"baseUrl"`
 			API     string `json:"api"`
 			APIKey  string `json:"apiKey"`
-			Models  []struct {
+			Compat  struct {
+				SupportsDeveloperRole bool `json:"supportsDeveloperRole"`
+			} `json:"compat"`
+			Models []struct {
 				ID            string   `json:"id"`
 				Name          string   `json:"name"`
 				Reasoning     bool     `json:"reasoning"`
@@ -1082,6 +1085,11 @@ func TestPiAddCreatesFile(t *testing.T) {
 	}
 	if p.BaseURL != testBase || p.API != "openai-completions" || p.APIKey != "tuba-sk-pi-key" {
 		t.Errorf("provider fields wrong:\n%s", data)
+	}
+	// the gateway rejects the "developer" role, so Pi must be told to send
+	// its system prompt as a plain "system" message
+	if p.Compat.SupportsDeveloperRole {
+		t.Errorf("compat must set supportsDeveloperRole to false:\n%s", data)
 	}
 	if len(p.Models) != 1 || p.Models[0].ID != "amber" || p.Models[0].Name != "Amber (2ba.ai)" {
 		t.Errorf("model entry wrong:\n%s", data)
@@ -1175,6 +1183,10 @@ func TestPiUpgradesOldEntry(t *testing.T) {
 	if input, _ := m["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
 		t.Errorf("input modalities not backfilled:\n%s", data)
 	}
+	compat, _ := p["compat"].(map[string]any)
+	if compat == nil || compat["supportsDeveloperRole"] != false {
+		t.Errorf("compat not backfilled:\n%s", data)
+	}
 	if !strings.Contains(buf.String(), "model capabilities added") {
 		t.Errorf("expected upgrade notice:\n%s", buf.String())
 	}
@@ -1183,7 +1195,7 @@ func TestPiUpgradesOldEntry(t *testing.T) {
 func TestPiCompleteEntryUntouched(t *testing.T) {
 	home := t.TempDir()
 	// user-customized values must survive a re-run
-	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "k", "models": [{"id": "amber", "name": "Amber (2ba.ai)", "reasoning": false, "input": ["text"], "contextWindow": 128000}]}}}`
+	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "k", "compat": {"supportsDeveloperRole": false}, "models": [{"id": "amber", "name": "Amber (2ba.ai)", "reasoning": false, "input": ["text"], "contextWindow": 128000}]}}}`
 	mustWrite(t, piModels(home), existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 
@@ -1240,7 +1252,7 @@ func TestPiDryRun(t *testing.T) {
 
 func TestPiDryRunExisting(t *testing.T) {
 	home := t.TempDir()
-	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "k", "models": [{"id": "amber", "name": "Amber (2ba.ai)", "reasoning": true, "input": ["text", "image"], "contextWindow": 262144}]}}}`
+	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "k", "compat": {"supportsDeveloperRole": false}, "models": [{"id": "amber", "name": "Amber (2ba.ai)", "reasoning": true, "input": ["text", "image"], "contextWindow": 262144}]}}}`
 	mustWrite(t, piModels(home), existing)
 	env, buf := newEnv(t, home, "amber", "k", true)
 	ConfigurePi(env)

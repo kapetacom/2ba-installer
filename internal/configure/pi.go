@@ -26,6 +26,15 @@ func piModelsFile() string {
 	return filepath.Join(PiAgentDir(), "models.json")
 }
 
+// piCompat is the provider-level compatibility declaration the installer
+// writes. For reasoning-capable models Pi sends its system prompt with the
+// "developer" role; 2ba's gateway rejects that role (400), so Pi must send
+// a plain "system" message instead. reasoning_effort is accepted as-is, so
+// supportsReasoningEffort stays at its default.
+func piCompat() map[string]any {
+	return map[string]any{"supportsDeveloperRole": false}
+}
+
 // piModelEntry returns the model entry the installer writes: a friendly
 // name, the thinking-model declaration (the amber backend accepts the
 // low/medium/high reasoning_effort values Pi sends for OpenAI-compatible
@@ -41,11 +50,12 @@ func piModelEntry(model string) map[string]any {
 	}
 }
 
-// patchPiModel upgrades the model entry whose id is model in an existing
-// "2ba" provider to the current declaration — the upgrade path for configs
-// written by an older installer. Missing fields are added; existing values
-// are never overwritten, and an entry without our model (user-managed) is
-// left alone. It reports whether the config changed.
+// patchPiModel upgrades the "2ba" provider to the current declaration — the
+// upgrade path for configs written by an older installer. It runs only when
+// the provider carries our model: missing model fields are backfilled and
+// the provider-level compat declaration is added, but existing values are
+// never overwritten, and a "2ba" provider without our model (user-managed)
+// is left alone. It reports whether the config changed.
 func patchPiModel(provider any, model string) bool {
 	p, ok := provider.(map[string]any)
 	if !ok {
@@ -55,18 +65,34 @@ func patchPiModel(provider any, model string) bool {
 	if !ok {
 		return false
 	}
-	changed := false
+	ours, changed := false, false
 	for _, entry := range models {
 		m, ok := entry.(map[string]any)
 		if !ok || m["id"] != model {
 			continue
 		}
+		ours = true
 		for k, v := range piModelEntry(model) {
 			if _, exists := m[k]; !exists {
 				m[k] = v
 				changed = true
 			}
 		}
+	}
+	if !ours {
+		return false
+	}
+	// An explicit user value on the compat key (any shape) is left alone;
+	// only a missing key or a map without our field is backfilled.
+	switch compat := p["compat"].(type) {
+	case map[string]any:
+		if _, exists := compat["supportsDeveloperRole"]; !exists {
+			compat["supportsDeveloperRole"] = false
+			changed = true
+		}
+	case nil:
+		p["compat"] = piCompat()
+		changed = true
 	}
 	return changed
 }
@@ -127,6 +153,7 @@ func ConfigurePi(e *Env) {
 		"baseUrl": e.APIBase,
 		"api":     "openai-completions",
 		"apiKey":  e.APIKey,
+		"compat":  piCompat(),
 		"models":  []any{piModelEntry(e.Model)},
 	}
 	if err := writeIndentedJSON(cfg, obj); err != nil {
