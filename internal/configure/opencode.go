@@ -24,7 +24,8 @@ func pyCapitalize(s string) string {
 // loadJSONObject reads and parses the JSON object at path into obj. It returns
 // false if the file does not exist (obj left as an empty map) or is corrupt
 // (obj untouched); in the corrupt case it returns ok=false and the caller
-// should leave the file alone.
+// should leave the file alone. Valid JSON that is not an object (e.g. a bare
+// "null", which would unmarshal into a nil map) is treated as corrupt too.
 func loadJSONObject(path string, obj *map[string]any) (exists, ok bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -32,6 +33,9 @@ func loadJSONObject(path string, obj *map[string]any) (exists, ok bool) {
 	}
 	if err := json.Unmarshal(data, obj); err != nil {
 		return true, false // corrupt → do not overwrite the user's settings
+	}
+	if *obj == nil {
+		return true, false
 	}
 	return true, true
 }

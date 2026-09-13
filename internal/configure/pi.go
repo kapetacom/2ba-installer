@@ -116,7 +116,15 @@ func ConfigurePi(e *Env) {
 		e.warnf("%s is not valid JSON — leaving it untouched (fix or remove it, then re-run)", cfg)
 		return
 	}
-	providers, _ := obj["providers"].(map[string]any)
+	var providers map[string]any
+	if raw, has := obj["providers"]; has {
+		var ok bool
+		providers, ok = raw.(map[string]any)
+		if !ok {
+			e.warnf("%s has a providers field that is not an object — leaving it untouched", cfg)
+			return
+		}
+	}
 	if providers == nil {
 		providers = map[string]any{}
 		obj["providers"] = providers

@@ -13,6 +13,7 @@ func TestDetectDirs(t *testing.T) {
 	t.Setenv("KIMI_CODE_HOME", filepath.Join(home, ".kimi-code"))
 	t.Setenv("TWOBA_DATA_DIR", filepath.Join(home, ".config", "2ba-code"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent"))
 
 	_ = os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o755)
 	_ = os.WriteFile(filepath.Join(home, ".zshrc"), []byte("#rc\n"), 0o600)

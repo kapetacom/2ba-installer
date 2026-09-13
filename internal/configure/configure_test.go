@@ -1222,18 +1222,41 @@ func TestPiNoAgentDir(t *testing.T) {
 }
 
 func TestPiMalformedJSON(t *testing.T) {
+	// A bare "null" is valid JSON that unmarshals into a nil map — it must
+	// be rejected like corrupt JSON, not rewritten into an object.
+	for _, broken := range []string{"{not json", "null"} {
+		t.Run(broken, func(t *testing.T) {
+			home := t.TempDir()
+			mustWrite(t, piModels(home), broken)
+			env, buf := newEnv(t, home, "amber", "k", false)
+
+			ConfigurePi(env)
+
+			if got, _ := os.ReadFile(piModels(home)); string(got) != broken {
+				t.Errorf("malformed catalog was rewritten:\n%s", got)
+			}
+			if !strings.Contains(buf.String(), "not valid JSON") {
+				t.Errorf("expected malformed-JSON warning:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+func TestPiProvidersNotAnObject(t *testing.T) {
+	// a user value on "providers" with the wrong shape must survive, not be
+	// replaced by the installer's map
+	existing := `{"providers": []}`
 	home := t.TempDir()
-	broken := "{not json"
-	mustWrite(t, piModels(home), broken)
+	mustWrite(t, piModels(home), existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 
 	ConfigurePi(env)
 
-	if got, _ := os.ReadFile(piModels(home)); string(got) != broken {
-		t.Errorf("malformed catalog was rewritten:\n%s", got)
+	if got, _ := os.ReadFile(piModels(home)); string(got) != existing {
+		t.Errorf("non-object providers field was replaced:\n%s", got)
 	}
-	if !strings.Contains(buf.String(), "not valid JSON") {
-		t.Errorf("expected malformed-JSON warning:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "not an object") {
+		t.Errorf("expected shape warning:\n%s", buf.String())
 	}
 }
 
@@ -1371,6 +1394,31 @@ func TestUninstallPi(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "removed 2ba entry") {
 		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+// Uninstall must leave agent JSON catalogs that hold no 2ba entry
+// byte-identical and without a backup.
+func TestUninstallNoRewriteWithout2ba(t *testing.T) {
+	home := t.TempDir()
+	piSeed := `{"providers": {"ollama": {"baseUrl": "http://localhost:11434/v1"}}}`
+	ocSeed := `{"provider": {"mine": {"name": "keep"}}}`
+	mustWrite(t, piModels(home), piSeed)
+	mustWrite(t, filepath.Join(home, ".config", "opencode", "opencode.json"), ocSeed)
+
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	if got, _ := os.ReadFile(piModels(home)); string(got) != piSeed {
+		t.Errorf("unrelated pi catalog was rewritten:\n%s", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json")); string(got) != ocSeed {
+		t.Errorf("unrelated opencode config was rewritten:\n%s", got)
+	}
+	for _, f := range []string{piModels(home), filepath.Join(home, ".config", "opencode", "opencode.json")} {
+		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
+			t.Errorf("uninstall without a 2ba entry left a backup: %s.bak.2ba", f)
+		}
 	}
 }
 
