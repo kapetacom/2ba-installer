@@ -44,13 +44,17 @@ func TestToggleByNumber(t *testing.T) {
 	if !m.sel[7] {
 		t.Error("8 should toggle claude on")
 	}
-	// 2ba-code is not a menu row, so key 9 (which would have been ninth)
-	// must be a no-op.
-	m = update(m, keyRunes("9"))
-	want := []bool{false, false, true, false, false, false, true, true}
+	m = update(m, keyRunes("9")) // pi on
+	if !m.sel[8] {
+		t.Error("9 should toggle pi on")
+	}
+	// 2ba-code is not a menu row, so key 0 (past the last row) must be a
+	// no-op.
+	m = update(m, keyRunes("0"))
+	want := []bool{false, false, true, false, false, false, true, true, true}
 	for i := range m.sel {
 		if m.sel[i] != want[i] {
-			t.Errorf("9 should be a no-op; sel = %v, want %v", m.sel, want)
+			t.Errorf("0 should be a no-op; sel = %v, want %v", m.sel, want)
 		}
 	}
 }

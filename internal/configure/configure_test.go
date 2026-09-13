@@ -43,6 +43,7 @@ func newEnv(t *testing.T, home, model, key string, dryRun bool) (*Env, *bytes.Bu
 	t.Setenv("ZCODE_HOME", filepath.Join(home, ".zcode"))
 	t.Setenv("TWOBA_DATA_DIR", filepath.Join(home, ".config", "2ba-code"))
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent"))
 	var buf bytes.Buffer
 	env := NewEnv(model, testBase, testOrigin, key, filepath.Join(home, ".config", "2ba", "2BA_API_KEY"), dryRun)
 	env.Out = &buf
@@ -1006,16 +1007,18 @@ func TestNoBackupOnNoOp(t *testing.T) {
 	twc := twocodeFile(home)
 	mustWrite(t, twc, `{"schemaVersion":2,"providers":[{"providerId":"custom-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","label":"2ba","apiFormat":"openai-chat-completions","baseURL":"`+testBase+`","apiKey":"old","models":[{"modelId":"amber","thinkingLevels":["off","low","medium","high"],"defaultThinkingLevel":"medium"}],"createdAt":1,"updatedAt":1}]}`)
 	mustWrite(t, claudeSettings(home), `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`)
+	mustWrite(t, piModels(home), `{"providers":{"2ba":{"baseUrl":"`+testBase+`","api":"openai-completions","apiKey":"old","compat":{"supportsDeveloperRole":false},"models":[{"id":"amber","name":"Amber (2ba.ai)","reasoning":true,"input":["text","image"],"contextWindow":262144}]}}}`)
 
 	env, buf := newEnv(t, home, "amber", "k", false)
 	ConfigureZcode(env)
 	ConfigureTwocode(env)
 	ConfigureClaude(env)
+	ConfigurePi(env)
 
-	if n := strings.Count(buf.String(), "already configured"); n != 3 {
-		t.Errorf("want three already-configured notes, got %d:\n%s", n, buf.String())
+	if n := strings.Count(buf.String(), "already configured"); n != 4 {
+		t.Errorf("want four already-configured notes, got %d:\n%s", n, buf.String())
 	}
-	for _, f := range []string{zcfg, twc, claudeSettings(home)} {
+	for _, f := range []string{zcfg, twc, claudeSettings(home), piModels(home)} {
 		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
 			t.Errorf("no-op run left a backup: %s.bak.2ba", f)
 		}
@@ -1036,6 +1039,251 @@ func TestUninstallNoBackupWhenNoMatch(t *testing.T) {
 		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
 			t.Errorf("uninstall without a 2ba entry left a backup: %s.bak.2ba", f)
 		}
+	}
+}
+
+// -------------------------------------------------------------------------- pi
+
+func piModels(home string) string {
+	return filepath.Join(home, ".pi", "agent", "models.json")
+}
+
+func TestPiAddCreatesFile(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".pi", "agent"))
+	env, buf := newEnv(t, home, "amber", "tuba-sk-pi-key", false)
+
+	ConfigurePi(env)
+
+	data, err := os.ReadFile(piModels(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Providers map[string]struct {
+			BaseURL string `json:"baseUrl"`
+			API     string `json:"api"`
+			APIKey  string `json:"apiKey"`
+			Compat  struct {
+				SupportsDeveloperRole bool `json:"supportsDeveloperRole"`
+			} `json:"compat"`
+			Models []struct {
+				ID            string   `json:"id"`
+				Name          string   `json:"name"`
+				Reasoning     bool     `json:"reasoning"`
+				Input         []string `json:"input"`
+				ContextWindow int      `json:"contextWindow"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	p, ok := root.Providers["2ba"]
+	if !ok {
+		t.Fatalf("2ba provider missing:\n%s", data)
+	}
+	if p.BaseURL != testBase || p.API != "openai-completions" || p.APIKey != "tuba-sk-pi-key" {
+		t.Errorf("provider fields wrong:\n%s", data)
+	}
+	// the gateway rejects the "developer" role, so Pi must be told to send
+	// its system prompt as a plain "system" message
+	if p.Compat.SupportsDeveloperRole {
+		t.Errorf("compat must set supportsDeveloperRole to false:\n%s", data)
+	}
+	if len(p.Models) != 1 || p.Models[0].ID != "amber" || p.Models[0].Name != "Amber (2ba.ai)" {
+		t.Errorf("model entry wrong:\n%s", data)
+	}
+	if !p.Models[0].Reasoning {
+		t.Errorf("model must be declared a thinking model:\n%s", data)
+	}
+	in := p.Models[0].Input
+	if len(in) != 2 || in[0] != "text" || in[1] != "image" {
+		t.Errorf("model must declare image input:\n%s", data)
+	}
+	if p.Models[0].ContextWindow != 262144 {
+		t.Errorf("context window = %d, want 262144:\n%s", p.Models[0].ContextWindow, data)
+	}
+	if st, _ := os.Stat(piModels(home)); st.Mode().Perm() != 0o600 {
+		t.Errorf("models.json perms = %v, want 0600", st.Mode().Perm())
+	}
+	if !strings.Contains(buf.String(), "Pi: provider") {
+		t.Errorf("expected add notice:\n%s", buf.String())
+	}
+}
+
+func TestPiAddKeepsUserProvider(t *testing.T) {
+	home := t.TempDir()
+	mustWrite(t, piModels(home), `{"providers": {"ollama": {"baseUrl": "http://localhost:11434/v1", "api": "openai-completions"}}}`)
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	ConfigurePi(env)
+
+	var cfg map[string]any
+	data, _ := os.ReadFile(piModels(home))
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	providers := cfg["providers"].(map[string]any)
+	if _, present := providers["ollama"]; !present {
+		t.Errorf("user provider lost:\n%s", data)
+	}
+	if _, present := providers["2ba"]; !present {
+		t.Errorf("2ba provider missing:\n%s", data)
+	}
+}
+
+func TestPiExisting2baUntouched(t *testing.T) {
+	home := t.TempDir()
+	// a "2ba" provider without our model is user-managed (or a different
+	// service that happens to use the same id): leave it completely alone
+	existing := `{"providers": {"2ba": {"name": "USER-OWNED", "apiKey": "user-secret"}}}`
+	mustWrite(t, piModels(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigurePi(env)
+
+	if got, _ := os.ReadFile(piModels(home)); string(got) != existing {
+		t.Errorf("existing 2ba provider was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+func TestPiUpgradesOldEntry(t *testing.T) {
+	home := t.TempDir()
+	// an entry with our model but no capability fields, as a stripped-down
+	// (or user-trimmed) catalog would look
+	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "user-rotated-key", "models": [{"id": "amber"}]}}}`
+	mustWrite(t, piModels(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigurePi(env)
+
+	data, _ := os.ReadFile(piModels(home))
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	p := cfg["providers"].(map[string]any)["2ba"].(map[string]any)
+	if p["apiKey"] != "user-rotated-key" {
+		t.Errorf("user apiKey modified:\n%s", data)
+	}
+	m := p["models"].([]any)[0].(map[string]any)
+	if m["name"] != "Amber (2ba.ai)" {
+		t.Errorf("name not backfilled:\n%s", data)
+	}
+	if m["reasoning"] != true {
+		t.Errorf("reasoning not backfilled:\n%s", data)
+	}
+	if m["contextWindow"] != float64(262144) {
+		t.Errorf("contextWindow not backfilled:\n%s", data)
+	}
+	if input, _ := m["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
+		t.Errorf("input modalities not backfilled:\n%s", data)
+	}
+	compat, _ := p["compat"].(map[string]any)
+	if compat == nil || compat["supportsDeveloperRole"] != false {
+		t.Errorf("compat not backfilled:\n%s", data)
+	}
+	if !strings.Contains(buf.String(), "model capabilities added") {
+		t.Errorf("expected upgrade notice:\n%s", buf.String())
+	}
+}
+
+func TestPiCompleteEntryUntouched(t *testing.T) {
+	home := t.TempDir()
+	// user-customized values must survive a re-run
+	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "k", "compat": {"supportsDeveloperRole": false}, "models": [{"id": "amber", "name": "Amber (2ba.ai)", "reasoning": false, "input": ["text"], "contextWindow": 128000}]}}}`
+	mustWrite(t, piModels(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigurePi(env)
+
+	if got, _ := os.ReadFile(piModels(home)); string(got) != existing {
+		t.Errorf("complete entry was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+func TestPiNoAgentDir(t *testing.T) {
+	home := t.TempDir()
+	// Keep pi off PATH so the "not detected" branch is taken even on a
+	// machine that has pi installed.
+	t.Setenv("PATH", t.TempDir())
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigurePi(env)
+	if !strings.Contains(buf.String(), "Pi not detected") || !strings.Contains(buf.String(), "install it, run it once") {
+		t.Errorf("expected not-detected warning:\n%s", buf.String())
+	}
+}
+
+func TestPiMalformedJSON(t *testing.T) {
+	// A bare "null" is valid JSON that unmarshals into a nil map — it must
+	// be rejected like corrupt JSON, not rewritten into an object.
+	for _, broken := range []string{"{not json", "null"} {
+		t.Run(broken, func(t *testing.T) {
+			home := t.TempDir()
+			mustWrite(t, piModels(home), broken)
+			env, buf := newEnv(t, home, "amber", "k", false)
+
+			ConfigurePi(env)
+
+			if got, _ := os.ReadFile(piModels(home)); string(got) != broken {
+				t.Errorf("malformed catalog was rewritten:\n%s", got)
+			}
+			if !strings.Contains(buf.String(), "not valid JSON") {
+				t.Errorf("expected malformed-JSON warning:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+func TestPiProvidersNotAnObject(t *testing.T) {
+	// a user value on "providers" with the wrong shape must survive, not be
+	// replaced by the installer's map
+	existing := `{"providers": []}`
+	home := t.TempDir()
+	mustWrite(t, piModels(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigurePi(env)
+
+	if got, _ := os.ReadFile(piModels(home)); string(got) != existing {
+		t.Errorf("non-object providers field was replaced:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "not an object") {
+		t.Errorf("expected shape warning:\n%s", buf.String())
+	}
+}
+
+func TestPiDryRun(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".pi", "agent"))
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigurePi(env)
+	if !strings.Contains(buf.String(), "would add 2ba provider to") {
+		t.Errorf("dry-run plan missing pi entry:\n%s", buf.String())
+	}
+	if _, err := os.Stat(piModels(home)); !os.IsNotExist(err) {
+		t.Errorf("dry run created the models file")
+	}
+}
+
+func TestPiDryRunExisting(t *testing.T) {
+	home := t.TempDir()
+	existing := `{"providers": {"2ba": {"baseUrl": "` + testBase + `", "api": "openai-completions", "apiKey": "k", "compat": {"supportsDeveloperRole": false}, "models": [{"id": "amber", "name": "Amber (2ba.ai)", "reasoning": true, "input": ["text", "image"], "contextWindow": 262144}]}}}`
+	mustWrite(t, piModels(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigurePi(env)
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("dry run must match the real path (leave existing provider as-is):\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(piModels(home)); string(got) != existing {
+		t.Errorf("dry run modified the catalog:\n%s", got)
 	}
 }
 
@@ -1123,6 +1371,54 @@ func TestUninstallZcode(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "removed 2ba entry") {
 		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+func TestUninstallPi(t *testing.T) {
+	home := t.TempDir()
+	mustWrite(t, piModels(home), `{"providers": {"2ba": {"baseUrl": "`+testBase+`", "api": "openai-completions", "apiKey": "tuba-sk-old"}, "ollama": {"baseUrl": "http://localhost:11434/v1"}}}`)
+	env, buf := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	var cfg map[string]any
+	data, _ := os.ReadFile(piModels(home))
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	providers := cfg["providers"].(map[string]any)
+	if _, present := providers["2ba"]; present {
+		t.Errorf("2ba provider not removed:\n%s", data)
+	}
+	if _, present := providers["ollama"]; !present {
+		t.Errorf("user provider was removed:\n%s", data)
+	}
+	if !strings.Contains(buf.String(), "removed 2ba entry") {
+		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+// Uninstall must leave agent JSON catalogs that hold no 2ba entry
+// byte-identical and without a backup.
+func TestUninstallNoRewriteWithout2ba(t *testing.T) {
+	home := t.TempDir()
+	piSeed := `{"providers": {"ollama": {"baseUrl": "http://localhost:11434/v1"}}}`
+	ocSeed := `{"provider": {"mine": {"name": "keep"}}}`
+	mustWrite(t, piModels(home), piSeed)
+	mustWrite(t, filepath.Join(home, ".config", "opencode", "opencode.json"), ocSeed)
+
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	if got, _ := os.ReadFile(piModels(home)); string(got) != piSeed {
+		t.Errorf("unrelated pi catalog was rewritten:\n%s", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json")); string(got) != ocSeed {
+		t.Errorf("unrelated opencode config was rewritten:\n%s", got)
+	}
+	for _, f := range []string{piModels(home), filepath.Join(home, ".config", "opencode", "opencode.json")} {
+		if _, err := os.Stat(f + ".bak.2ba"); err == nil {
+			t.Errorf("uninstall without a 2ba entry left a backup: %s.bak.2ba", f)
+		}
 	}
 }
 

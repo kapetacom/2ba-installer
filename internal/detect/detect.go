@@ -23,6 +23,7 @@ type Services struct {
 	Zcode    bool
 	Twocode  bool
 	Claude   bool
+	Pi       bool
 
 	// ShellRC is the first existing shell rc file ("" if none).
 	ShellRC string
@@ -105,6 +106,7 @@ func Detect() Services {
 	s.Zcode = dirExists(zcodeHome()) || onPath("zcode")
 	s.Twocode = dirExists(configure.TwocodeDataDir())
 	s.Claude = dirExists(configure.ClaudeConfigDir()) || onPath("claude")
+	s.Pi = dirExists(configure.PiAgentDir()) || onPath("pi")
 
 	return s
 }
@@ -130,6 +132,8 @@ func (s Services) Has(name string) bool {
 		return s.Twocode
 	case "claude":
 		return s.Claude
+	case "pi":
+		return s.Pi
 	}
 	return false
 }

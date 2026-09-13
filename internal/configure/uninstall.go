@@ -7,31 +7,84 @@ import (
 	"strings"
 )
 
+// jsonEntryExists reports whether an agent JSON config holds a 2ba entry under
+// key — the predicate that decides whether the uninstall rewrites (and backs
+// up) the file. A missing, corrupt, or non-object catalog reports false.
+func jsonEntryExists(path, key string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
+		return false
+	}
+	if providers, ok := obj["provider"].(map[string]any); ok {
+		if _, has := providers[key]; has {
+			return true
+		}
+	}
+	// Pi's models.json uses the plural "providers" map.
+	if providers, ok := obj["providers"].(map[string]any); ok {
+		if _, has := providers[key]; has {
+			return true
+		}
+	}
+	if m, ok := obj["model"].(string); ok && strings.HasPrefix(m, key+"/") {
+		return true
+	}
+	if models, ok := obj["models"].(map[string]any); ok {
+		if _, has := models[key]; has {
+			return true
+		}
+	}
+	return false
+}
+
 // removeJSONEntry deletes the 2ba-owned "2ba"/"2BA" provider and model entries
-// from an agent JSON config, rewriting it. A corrupt file is left untouched and
-// an error returned. It returns nil when the file is missing.
-func removeJSONEntry(path, key string) error {
+// from an agent JSON config, rewriting it. It returns removed=false without
+// touching the file when no entry matches. A corrupt file is left untouched
+// and an error returned.
+func removeJSONEntry(path, key string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(data, &obj); err != nil {
-		return err
+		return false, err
 	}
+	removed := false
 	if providers, ok := obj["provider"].(map[string]any); ok {
-		delete(providers, key)
+		if _, has := providers[key]; has {
+			delete(providers, key)
+			removed = true
+		}
+	}
+	// Pi's models.json uses the plural "providers" map.
+	if providers, ok := obj["providers"].(map[string]any); ok {
+		if _, has := providers[key]; has {
+			delete(providers, key)
+			removed = true
+		}
 	}
 	if m, ok := obj["model"].(string); ok && strings.HasPrefix(m, key+"/") {
 		delete(obj, "model")
+		removed = true
 	}
 	if models, ok := obj["models"].(map[string]any); ok {
-		delete(models, key)
+		if _, has := models[key]; has {
+			delete(models, key)
+			removed = true
+		}
 	}
-	return writeIndentedJSON(path, obj)
+	if !removed {
+		return false, nil
+	}
+	return true, writeIndentedJSON(path, obj)
 }
 
 // Uninstall removes everything the installer manages: the shell rc block, the
@@ -55,13 +108,23 @@ func Uninstall(e *Env) {
 		}
 	}
 
-	// agent JSON configs (opencode + windsurf + zcode)
+	// agent JSON configs (opencode + windsurf + zcode + pi)
 	for _, cfg := range []string{
 		filepath.Join(xdgConfig(), "opencode", "opencode.json"),
 		filepath.Join(home(), ".codeium", "windsurf", "model_config.json"),
 		filepath.Join(zcodeHome(), "v2", "config.json"),
+		piModelsFile(),
 	} {
 		if !fileExists(cfg) {
+			continue
+		}
+		key := "2ba"
+		if strings.Contains(cfg, "windsurf") {
+			key = "2BA"
+		}
+		// A catalog that holds no 2ba entry is left completely untouched:
+		// no rewrite, no backup (same rule as the 2ba-code and Claude paths).
+		if !jsonEntryExists(cfg, key) {
 			continue
 		}
 		if e.DryRun {
@@ -69,11 +132,7 @@ func Uninstall(e *Env) {
 			continue
 		}
 		e.backup(cfg)
-		key := "2ba"
-		if strings.Contains(cfg, "windsurf") {
-			key = "2BA"
-		}
-		if err := removeJSONEntry(cfg, key); err != nil {
+		if _, err := removeJSONEntry(cfg, key); err != nil {
 			e.warnf("%s is not valid JSON — leaving it untouched", cfg)
 		} else {
 			e.logf("removed 2ba entry from %s", cfg)
