@@ -32,6 +32,15 @@ working even when run through a pipe.
 
 The API key is always stored at `~/.config/2ba/2BA_API_KEY` (mode `0600`).
 
+Re-running the installer only adds or updates the selected tools; a tool
+you leave out keeps its 2ba entry until you run `--uninstall`, which removes
+everything the installer manages. Claude Code is the one exception: it has
+no provider list, and the `ANTHROPIC_*` env block in `~/.claude/settings.json`
+switches the whole tool to 2ba. So a re-run without claude selected (untick
+it in the menu, or leave it out of `--services`) removes that block again.
+The default and `--yes` runs select every detected tool, so they reconfigure
+Claude Code rather than revert it.
+
 ## Options
 
 ```

@@ -998,6 +998,111 @@ func TestClaudeDryRunExisting(t *testing.T) {
 	}
 }
 
+func TestRevertClaudeRemovesManaged(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"theme":"dark","env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai/v1","ANTHROPIC_AUTH_TOKEN":"tuba-sk-old","ANTHROPIC_MODEL":"amber","ANTHROPIC_SMALL_FAST_MODEL":"amber","ANTHROPIC_API_KEY":"user-real-key"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	RevertClaude(env)
+
+	data, _ := os.ReadFile(claudeSettings(home))
+	var cfg struct {
+		Theme string            `json:"theme"`
+		Env   map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	if cfg.Theme != "dark" {
+		t.Errorf("user settings lost:\n%s", data)
+	}
+	for _, k := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"} {
+		if _, has := cfg.Env[k]; has {
+			t.Errorf("%s not removed:\n%s", k, data)
+		}
+	}
+	if cfg.Env["ANTHROPIC_API_KEY"] != "user-real-key" {
+		t.Errorf("user's ANTHROPIC_API_KEY was removed:\n%s", data)
+	}
+	if _, err := os.Stat(claudeSettings(home) + ".bak.2ba"); err != nil {
+		t.Errorf("no backup created:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "removed 2ba configuration") {
+		t.Errorf("expected removal notice:\n%s", buf.String())
+	}
+}
+
+func TestRevertClaudeOtherGatewayUntouched(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://proxy.example.com","ANTHROPIC_API_KEY":"k"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	RevertClaude(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != seed {
+		t.Errorf("unrelated settings were rewritten:\n%s", got)
+	}
+	if _, err := os.Stat(claudeSettings(home) + ".bak.2ba"); !os.IsNotExist(err) {
+		t.Errorf("no-op run created a backup")
+	}
+	if buf.String() != "" {
+		t.Errorf("no output expected on a no-op:\n%s", buf.String())
+	}
+}
+
+func TestRevertClaudeNoSettings(t *testing.T) {
+	home := t.TempDir()
+	env, buf := newEnv(t, home, "amber", "k", false)
+	RevertClaude(env)
+	if buf.String() != "" {
+		t.Errorf("no output expected without a settings file:\n%s", buf.String())
+	}
+}
+
+// An empty --api-base normalizes to "", and so does a settings file whose
+// env has no ANTHROPIC_BASE_URL. That must not count as a match: the file
+// is not ours and its ANTHROPIC_* keys belong to the user.
+func TestRevertClaudeEmptyBaseUntouched(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"env":{"ANTHROPIC_MODEL":"claude-opus-5","ANTHROPIC_API_KEY":"k"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+	env.APIBase = ""
+
+	RevertClaude(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != seed {
+		t.Errorf("settings rewritten on an empty base:\n%s", got)
+	}
+	if _, err := os.Stat(claudeSettings(home) + ".bak.2ba"); !os.IsNotExist(err) {
+		t.Errorf("no-op run created a backup")
+	}
+	if buf.String() != "" {
+		t.Errorf("no output expected on a no-op:\n%s", buf.String())
+	}
+}
+
+func TestRevertClaudeDryRun(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", true)
+
+	RevertClaude(env)
+
+	if !strings.Contains(buf.String(), "would remove the 2ba configuration") {
+		t.Errorf("dry-run plan missing revert entry:\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != seed {
+		t.Errorf("dry run modified the settings:\n%s", got)
+	}
+	if _, err := os.Stat(claudeSettings(home) + ".bak.2ba"); !os.IsNotExist(err) {
+		t.Errorf("dry run created a backup")
+	}
+}
+
 // A backup is only taken right before a real write, so no-op runs must not
 // leave *.bak.2ba files behind.
 func TestNoBackupOnNoOp(t *testing.T) {

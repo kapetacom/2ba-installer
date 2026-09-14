@@ -240,6 +240,14 @@ func main() {
 	}
 	if sel.Claude {
 		configure.ConfigureClaude(env)
+	} else {
+		// Deselecting claude on a re-run (menu or --services) must undo a
+		// previous 2ba configuration: its ANTHROPIC_* vars are a global
+		// knob, so a leftover settings.json would keep pointing Claude at
+		// 2ba. Auto-detect (--yes) never gets here for a configured Claude:
+		// the settings file keeps the config dir present, so Claude stays
+		// selected and is reconfigured instead.
+		configure.RevertClaude(env)
 	}
 	if sel.Pi {
 		configure.ConfigurePi(env)
