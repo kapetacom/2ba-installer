@@ -133,7 +133,7 @@ func RevertClaude(e *Env) {
 	}
 	e.backup(cs)
 	if removed, err := removeClaudeConfig(cs, base); err != nil {
-		e.warnf("%s is not valid JSON — leaving it untouched", cs)
+		e.warnf("could not revert %s: %v", cs, err)
 	} else if removed {
 		e.logf("removed 2ba configuration from %s (claude not selected)", cs)
 	}
@@ -141,8 +141,13 @@ func RevertClaude(e *Env) {
 
 // claudeConfigManaged reports whether path's env block points at base — the
 // predicate removeClaudeConfig removes on. Used to back the file up only
-// when the uninstall actually removes the installer's keys.
+// when the uninstall actually removes the installer's keys. An empty base
+// (--api-base "") never matches: a settings file without ANTHROPIC_BASE_URL
+// also normalizes to "", and it is not ours.
 func claudeConfigManaged(path, base string) bool {
+	if base == "" {
+		return false
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -162,8 +167,12 @@ func claudeConfigManaged(path, base string) bool {
 // removeClaudeConfig strips the ANTHROPIC_* vars the installer wrote, but
 // only when the settings point at base (the predicate ConfigureClaude used
 // to write them). Unrelated settings files are left untouched, and a user's
-// own ANTHROPIC_API_KEY always survives.
+// own ANTHROPIC_API_KEY always survives. An empty base never matches (see
+// claudeConfigManaged).
 func removeClaudeConfig(path, base string) (bool, error) {
+	if base == "" {
+		return false, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false, err

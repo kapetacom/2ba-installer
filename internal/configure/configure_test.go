@@ -1061,6 +1061,29 @@ func TestRevertClaudeNoSettings(t *testing.T) {
 	}
 }
 
+// An empty --api-base normalizes to "", and so does a settings file whose
+// env has no ANTHROPIC_BASE_URL. That must not count as a match: the file
+// is not ours and its ANTHROPIC_* keys belong to the user.
+func TestRevertClaudeEmptyBaseUntouched(t *testing.T) {
+	home := t.TempDir()
+	seed := `{"env":{"ANTHROPIC_MODEL":"claude-opus-5","ANTHROPIC_API_KEY":"k"}}`
+	mustWrite(t, claudeSettings(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+	env.APIBase = ""
+
+	RevertClaude(env)
+
+	if got, _ := os.ReadFile(claudeSettings(home)); string(got) != seed {
+		t.Errorf("settings rewritten on an empty base:\n%s", got)
+	}
+	if _, err := os.Stat(claudeSettings(home) + ".bak.2ba"); !os.IsNotExist(err) {
+		t.Errorf("no-op run created a backup")
+	}
+	if buf.String() != "" {
+		t.Errorf("no output expected on a no-op:\n%s", buf.String())
+	}
+}
+
 func TestRevertClaudeDryRun(t *testing.T) {
 	home := t.TempDir()
 	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://api.2ba.ai","ANTHROPIC_AUTH_TOKEN":"old"}}`

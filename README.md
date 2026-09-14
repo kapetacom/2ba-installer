@@ -32,9 +32,11 @@ working even when run through a pipe.
 
 The API key is always stored at `~/.config/2ba/2BA_API_KEY` (mode `0600`).
 
-Re-running the installer without claude selected reverts the `ANTHROPIC_*`
-env block a previous run wrote to `~/.claude/settings.json`, so Claude Code
-stops pointing at 2ba.
+Re-running the installer without claude selected (untick it in the menu, or
+leave it out of `--services`) reverts the `ANTHROPIC_*` env block a previous
+run wrote to `~/.claude/settings.json`, so Claude Code stops pointing at 2ba.
+The default and `--yes` runs select every detected tool, so they reconfigure
+Claude Code rather than revert it.
 
 ## Options
 

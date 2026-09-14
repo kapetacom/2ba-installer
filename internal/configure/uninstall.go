@@ -164,7 +164,7 @@ func Uninstall(e *Env) {
 		} else if claudeConfigManaged(cs, base) {
 			e.backup(cs)
 			if removed, err := removeClaudeConfig(cs, base); err != nil {
-				e.warnf("%s is not valid JSON — leaving it untouched", cs)
+				e.warnf("could not remove the 2ba configuration from %s: %v", cs, err)
 			} else if removed {
 				e.logf("removed 2ba configuration from %s", cs)
 			}
