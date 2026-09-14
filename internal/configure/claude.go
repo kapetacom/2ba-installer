@@ -113,6 +113,32 @@ func ConfigureClaude(e *Env) {
 	e.logf("Claude Code: 2ba configured, model %s (%s)", e.Model, cfg)
 }
 
+// RevertClaude undoes what ConfigureClaude wrote when the user re-runs the
+// installer without selecting Claude: it strips the ANTHROPIC_* vars from the
+// settings env block, but only when the file points at this installer's base
+// (the same predicate the uninstall uses). An unrelated settings file is
+// left untouched, and a user's own ANTHROPIC_API_KEY always survives.
+func RevertClaude(e *Env) {
+	cs := claudeSettingsFile()
+	if !fileExists(cs) {
+		return
+	}
+	base := claudeBaseURL(e.APIBase)
+	if !claudeConfigManaged(cs, base) {
+		return
+	}
+	if e.DryRun {
+		e.logf("would remove the 2ba configuration from %s (claude not selected)", cs)
+		return
+	}
+	e.backup(cs)
+	if removed, err := removeClaudeConfig(cs, base); err != nil {
+		e.warnf("%s is not valid JSON — leaving it untouched", cs)
+	} else if removed {
+		e.logf("removed 2ba configuration from %s (claude not selected)", cs)
+	}
+}
+
 // claudeConfigManaged reports whether path's env block points at base — the
 // predicate removeClaudeConfig removes on. Used to back the file up only
 // when the uninstall actually removes the installer's keys.
