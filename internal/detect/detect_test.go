@@ -15,6 +15,7 @@ func TestDetectDirs(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent"))
 	t.Setenv("OPENCLAW_STATE_DIR", filepath.Join(home, ".openclaw"))
+	t.Setenv("HERMES_HOME", filepath.Join(home, ".hermes"))
 
 	_ = os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o755)
 	_ = os.WriteFile(filepath.Join(home, ".zshrc"), []byte("#rc\n"), 0o600)
@@ -27,9 +28,10 @@ func TestDetectDirs(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
 	_ = os.MkdirAll(filepath.Join(home, ".pi", "agent"), 0o755)
 	_ = os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".hermes"), 0o755)
 
 	s := Detect()
-	if !s.Shell || !s.Opencode || !s.Windsurf || !s.Kimi || !s.Continue || !s.Cursor || !s.Zcode || !s.Twocode || !s.Claude || !s.Pi || !s.Openclaw {
+	if !s.Shell || !s.Opencode || !s.Windsurf || !s.Kimi || !s.Continue || !s.Cursor || !s.Zcode || !s.Twocode || !s.Claude || !s.Pi || !s.Openclaw || !s.Hermes {
 		t.Errorf("expected all services detected, got %+v", s)
 	}
 	if s.ShellRC != filepath.Join(home, ".zshrc") {
@@ -53,8 +55,8 @@ func TestFirstShellRCPriority(t *testing.T) {
 }
 
 func TestHas(t *testing.T) {
-	s := Services{Shell: true, Kimi: true, Zcode: true, Twocode: true, Claude: true, Pi: true, Openclaw: true}
-	if !s.Has("shell") || !s.Has("kimi") || !s.Has("zcode") || !s.Has("2ba-code") || !s.Has("claude") || !s.Has("pi") || !s.Has("openclaw") {
+	s := Services{Shell: true, Kimi: true, Zcode: true, Twocode: true, Claude: true, Pi: true, Openclaw: true, Hermes: true}
+	if !s.Has("shell") || !s.Has("kimi") || !s.Has("zcode") || !s.Has("2ba-code") || !s.Has("claude") || !s.Has("pi") || !s.Has("openclaw") || !s.Has("hermes") {
 		t.Error("Has should report present services")
 	}
 	if s.Has("cursor") || s.Has("bogus") {
