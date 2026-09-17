@@ -49,11 +49,15 @@ func InstructHermes(e *Env) {
 		e.warnf("hermes: refusing to print instructions with an empty model or API key")
 		return
 	}
-	e.warnf("Hermes detected — append this to %s:", hermesConfigFile())
+	e.warnf("Hermes detected — add the snippet below to %s (merge into any existing top-level keys, don't paste a duplicate):", hermesConfigFile())
 	// The block uses documented key names verbatim. `transport` defaults
 	// to chat_completions when omitted; setting it explicitly avoids
 	// ambiguity on future Hermes releases. `default_model` on a provider
 	// makes the provider the source of truth for the entry's models.
+	// Note: the installer prints this every run — Hermes reads YAML, and
+	// duplicate top-level keys resolve last-wins per YAML 1.2. The user
+	// is responsible for merging; we cannot tell from here whether the
+	// snippet was already pasted. Same trade-off as InstructContinue.
 	e.hintf("providers:")
 	e.hintf("  2ba:")
 	e.hintf("    api: %s", e.APIBase)
