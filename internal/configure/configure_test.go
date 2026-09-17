@@ -2233,11 +2233,16 @@ func readHermes(t *testing.T, path string) map[string]any {
 	return doc
 }
 
-// On a fresh install with no ~/.hermes/config.yaml the installer creates
-// the home dir (0700) and writes the config file (0600) with the
-// providers.2ba and model.* seeds.
+// On a fresh install with no ~/.hermes/config.yaml the installer writes
+// the config file (0600) with the providers.2ba and model.* seeds.
+// The home dir is pre-created (matches the same pattern as TestPi*:
+// the installer bails with "Hermes not detected" when neither ~/.hermes
+// nor a `hermes` binary on PATH is found, so the test must present at
+// least one of those signals). The installer creates a fresh dir at
+// 0700; an existing dir is left at the user's chosen perms.
 func TestHermesAddCreatesFile(t *testing.T) {
 	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
 	env, buf := newEnv(t, home, "amber", "tuba-sk-hermes-key", false)
 
 	ConfigureHermes(env)
@@ -2246,8 +2251,8 @@ func TestHermesAddCreatesFile(t *testing.T) {
 	if st, _ := os.Stat(cfg); st == nil || st.Mode().Perm() != 0o600 {
 		t.Errorf("config perms wrong: %v", st)
 	}
-	if st, _ := os.Stat(filepath.Join(home, ".hermes")); st == nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
-		t.Errorf("home perms wrong: %v", st)
+	if st, err := os.Stat(filepath.Join(home, ".hermes")); err != nil || !st.IsDir() {
+		t.Errorf("home dir missing or not a directory: %v", st)
 	}
 	doc := readHermes(t, cfg)
 	providers, _ := doc["providers"].(map[string]any)
