@@ -45,6 +45,7 @@ func newEnv(t *testing.T, home, model, key string, dryRun bool) (*Env, *bytes.Bu
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(home, ".pi", "agent"))
 	t.Setenv("OPENCLAW_STATE_DIR", filepath.Join(home, ".openclaw"))
+	t.Setenv("HERMES_HOME", filepath.Join(home, ".hermes"))
 	var buf bytes.Buffer
 	env := NewEnv(model, testBase, testOrigin, key, filepath.Join(home, ".config", "2ba", "2BA_API_KEY"), dryRun)
 	env.Out = &buf
@@ -2205,4 +2206,81 @@ func TestUninstallOpenclawIgnoresSiblingModelMatch(t *testing.T) {
 	if _, err := os.Stat(ocPath + ".bak.2ba"); err == nil {
 		t.Errorf("uninstall without an installer-owned entry left a backup")
 	}
+}
+
+// ---------------------------------------------------------------------- hermes
+
+func TestHermesInstructWhenInstalled(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	env, buf := newEnv(t, home, "amber", "tuba-sk-hermes-key", false)
+
+	InstructHermes(env)
+
+	// The snippet must point at the user's config.yaml and contain the
+	// documented key names so a copy-paste into ~/.hermes/config.yaml
+	// works without further editing.
+	out := buf.String()
+	for _, want := range []string{
+		filepath.Join(home, ".hermes", "config.yaml"),
+		"providers:",
+		"2ba:",
+		"api: " + testBase,
+		"api_key: tuba-sk-hermes-key",
+		"transport: chat_completions",
+		"default_model: amber",
+		"model:",
+		"provider: 2ba",
+		"default: 2ba:amber",
+		// capability hint for amber, which is not in models.dev
+		"supports_vision: true",
+		"supports_reasoning: true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in instruction output:\n%s", want, out)
+		}
+	}
+	// Instruct-mode must not touch the user's config.yaml — the file
+	// does not even exist in this test, and no backup should be left
+	// behind.
+	if _, err := os.Stat(filepath.Join(home, ".hermes", "config.yaml")); !os.IsNotExist(err) {
+		t.Errorf("instruct-mode created ~/.hermes/config.yaml")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".hermes", "config.yaml.bak.2ba")); err == nil {
+		t.Errorf("instruct-mode left a backup")
+	}
+}
+
+// When neither the home dir nor `hermes` is on PATH, InstructHermes is a
+// no-op (same detection rule as InstructContinue and InstructCursor: no
+// install to instruct → stay silent).
+func TestHermesSilentWhenAbsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir()) // clear PATH so `hermes` cannot be found
+	env, buf := newEnv(t, home, "amber", "k", false)
+	InstructHermes(env)
+	if buf.Len() != 0 {
+		t.Errorf("expected silent no-op, got:\n%s", buf.String())
+	}
+}
+
+// Instruct-mode refuses to print a snippet with an empty model or key so
+// the user does not paste a broken entry into their config.yaml.
+func TestHermesRefusesEmpty(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	t.Run("empty model", func(t *testing.T) {
+		env, buf := newEnv(t, home, "", "k", false)
+		InstructHermes(env)
+		if !strings.Contains(buf.String(), "empty model") {
+			t.Errorf("expected empty-model warning, got:\n%s", buf.String())
+		}
+	})
+	t.Run("empty key", func(t *testing.T) {
+		env, buf := newEnv(t, home, "amber", "", false)
+		InstructHermes(env)
+		if !strings.Contains(buf.String(), "empty") {
+			t.Errorf("expected empty-key warning, got:\n%s", buf.String())
+		}
+	})
 }
