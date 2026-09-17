@@ -29,6 +29,7 @@ working even when run through a pipe.
 | 2ba-code | adds a `2ba` custom provider to the 2ba-code desktop app's owner-only `custom-model-providers.json` (profile dir under `~/.config/2ba-code`) |
 | claude   | points Claude Code at 2ba via `ANTHROPIC_*` env vars in `~/.claude/settings.json` (needs the gateway's Anthropic Messages endpoint) |
 | pi       | adds a `2ba` OpenAI-compatible provider to Pi's `~/.pi/agent/models.json` |
+| openclaw | adds a `2ba` OpenAI-compatible provider to OpenClaw's `~/.openclaw/openclaw.json` and sets it as the default agent model |
 
 The API key is always stored at `~/.config/2ba/2BA_API_KEY` (mode `0600`).
 
@@ -46,7 +47,7 @@ Claude Code rather than revert it.
 ```
 --dry-run        print the plan without touching anything
 --uninstall      remove everything this binary manages
---services LIST  services to configure: shell,opencode,windsurf,kimi,continue,cursor,zcode,2ba-code,claude,pi
+--services LIST  services to configure: shell,opencode,windsurf,kimi,continue,cursor,zcode,2ba-code,claude,pi,openclaw
 --model NAME     model to configure (default: amber)
 --api-base URL   API base URL override (default: https://api.2ba.ai/v1)
 --api-origin URL pairing/website origin override, e.g. http://localhost:8080

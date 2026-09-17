@@ -89,8 +89,8 @@ func removeJSONEntry(path, key string) (bool, error) {
 
 // Uninstall removes everything the installer manages: the shell rc block, the
 // agent JSON entries, the 2ba-code custom-provider entry, the Claude Code
-// env block, the Kimi TOML blocks, and the key file. Backups are kept as
-// *.bak.2ba next to the modified files.
+// env block, the Kimi TOML blocks, the OpenClaw config block, and the key
+// file. Backups are kept as *.bak.2ba next to the modified files.
 func Uninstall(e *Env) {
 	e.logf("removing 2ba.ai managed configuration…")
 
@@ -136,6 +136,23 @@ func Uninstall(e *Env) {
 			e.warnf("%s is not valid JSON — leaving it untouched", cfg)
 		} else {
 			e.logf("removed 2ba entry from %s", cfg)
+		}
+	}
+
+	// OpenClaw config — the installer manages models.providers["2ba"] and the
+	// default-model slot under agents.defaults.model. Removal walks the nested
+	// provider map directly, since the generic removeJSONEntry helper only knows
+	// about top-level provider/providers keys. Backup-only-when-matching rule.
+	if oc := openclawConfigFile(); fileExists(oc) {
+		if e.DryRun {
+			e.logf("would remove the 2ba provider from %s", oc)
+		} else if openclawConfigManaged(oc, e.Model) {
+			e.backup(oc)
+			if removed, err := removeOpenclawProvider(oc, e.Model); err != nil {
+				e.warnf("%s is not valid JSON — leaving it untouched", oc)
+			} else if removed {
+				e.logf("removed 2ba entry from %s", oc)
+			}
 		}
 	}
 
