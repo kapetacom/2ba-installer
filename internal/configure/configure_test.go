@@ -2430,7 +2430,9 @@ func TestHermesCompleteProviderFillsMissingDefault(t *testing.T) {
 	}
 }
 
-// Dry-run does not touch the file (and leaves no backup).
+// Dry-run does not touch the file or create the home dir (and leaves
+// no backup). The "without touching anything" contract has to hold
+// even when ~/.hermes doesn't exist yet.
 func TestHermesDryRun(t *testing.T) {
 	home := t.TempDir()
 	mustMkdir(t, filepath.Join(home, ".hermes"))
@@ -2551,5 +2553,63 @@ func TestUninstallHermesWithEmptyAPIKey(t *testing.T) {
 	}
 	if _, present := doc["__2ba"]; present {
 		t.Errorf("__2ba marker not removed:\n%v", doc["__2ba"])
+	}
+}
+
+// Uninstall with a different --model still removes the installer's
+// `model.default`, because the `2ba:` prefix identifies the slot as
+// installer-managed regardless of which model the uninstall was
+// invoked with.
+func TestUninstallHermesModelMismatchRemovesDefault(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	seed := "providers:\n  2ba:\n    api: " + testBase + "\n    api_key: k\n    transport: chat_completions\n    default_model: amber\n__2ba:\n  version: \"1\"\nmodel:\n  default: 2ba:amber\n  provider: 2ba\n"
+	mustWrite(t, hermesConfig(home), seed)
+	env, _ := newEnv(t, home, "different-model", "k", false)
+	Uninstall(env)
+
+	doc := readHermes(t, hermesConfig(home))
+	model, _ := doc["model"].(map[string]any)
+	if _, present := model["default"]; present {
+		t.Errorf("model.default was not removed on uninstall with mismatched model: %v", model)
+	}
+}
+
+// A file with `providers:` as a sequence (not a mapping) cannot be
+// merged into. The installer must surface a warning and leave the
+// file untouched — never partially write one block and silently
+// leave the other in an invalid state.
+func TestHermesIncompatibleProvidersShape(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	seed := "providers:\n  - foo\n  - bar\n"
+	mustWrite(t, hermesConfig(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureHermes(env)
+
+	if !strings.Contains(buf.String(), "not an object") {
+		t.Errorf("expected shape-warning:\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(hermesConfig(home)); string(got) != seed {
+		t.Errorf("file was modified despite shape warning:\n%s", got)
+	}
+}
+
+// A file with `model:` as a scalar is also rejected.
+func TestHermesIncompatibleModelShape(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	seed := "model: 42\n"
+	mustWrite(t, hermesConfig(home), seed)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureHermes(env)
+
+	if !strings.Contains(buf.String(), "not an object") {
+		t.Errorf("expected shape-warning:\n%s", buf.String())
+	}
+	if got, _ := os.ReadFile(hermesConfig(home)); string(got) != seed {
+		t.Errorf("file was modified despite shape warning:\n%s", got)
 	}
 }

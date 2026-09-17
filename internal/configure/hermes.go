@@ -64,13 +64,6 @@ func ConfigureHermes(e *Env) {
 		e.warnf("hermes: refusing to write with an empty model or API key")
 		return
 	}
-	// Make sure the home dir exists before we attempt to read or write.
-	// Hermes may be installed but never run; on a fresh install we need
-	// to create ~/.hermes (0700) ourselves.
-	if err := os.MkdirAll(homeDir, 0o700); err != nil {
-		e.warnf("could not create %s: %v", homeDir, err)
-		return
-	}
 	cfg := hermesConfigFile()
 
 	doc, err := loadHermesYAML(cfg)
@@ -80,6 +73,18 @@ func ConfigureHermes(e *Env) {
 	}
 
 	root := hermesRoot(doc)
+
+	// Pre-flight: bail on files whose top-level shapes we don't
+	// recognise. A `providers: []` (sequence) or `model: 42` (scalar)
+	// is a user-defined shape the installer cannot safely merge into.
+	// We surface the warning and leave the file alone — never partially
+	// write one block and silently leave the other in an invalid state.
+	if !e.DryRun {
+		if !hermesTopShapeIsCompatible(root, e) {
+			return
+		}
+	}
+
 	owned := hermesFileIsOwned(root)
 
 	// If the file already carries a "providers.2ba" entry but no
@@ -111,12 +116,21 @@ func ConfigureHermes(e *Env) {
 		e.logf("would add or update provider \"2ba\" in %s", cfg)
 		return
 	}
+	// Make sure the home dir exists before we attempt to write.
+	// Hermes may be installed but never run; on a fresh install we
+	// create ~/.hermes (0700) ourselves. Done *after* the dry-run
+	// bail so the command's "without touching anything" contract
+	// holds: a missing dir is only created when we actually write.
+	if err := os.MkdirAll(homeDir, 0o700); err != nil {
+		e.warnf("could not create %s: %v", homeDir, err)
+		return
+	}
 	e.backup(cfg)
 	if err := writeHermesYAML(cfg, doc); err != nil {
 		e.warnf("could not write %s: %v", cfg, err)
 		return
 	}
-	e.logf("Hermes: provider \"2ba\" updated, default model 2ba/%s (%s)", e.Model, cfg)
+	e.logf("Hermes: provider \"2ba\" updated, default model 2ba:%s (%s)", e.Model, cfg)
 }
 
 // loadHermesYAML parses cfg into a yaml.DocumentNode, returning an empty
@@ -245,6 +259,27 @@ func hermesFileIsOwned(root *yaml.Node) bool {
 	return mapGet(root, hermesMarkerKey) != nil
 }
 
+// hermesTopShapeIsCompatible reports whether the existing top-level
+// keys we'd touch (`providers` and `model`) are compatible with the
+// installer's merge: either absent, or already mappings. A
+// user-defined `providers: []` (sequence) or `model: 42` (scalar) is
+// a shape we cannot merge into; surface a warning and let the caller
+// bail without writing.
+func hermesTopShapeIsCompatible(root *yaml.Node, e *Env) bool {
+	ok := true
+	for _, key := range []string{"providers", "model"} {
+		v := mapGet(root, key)
+		if v == nil {
+			continue
+		}
+		if v.Kind != yaml.MappingNode {
+			e.warnf("%s has a top-level `%s` that is not an object (%v) — leaving the file untouched", hermesConfigFile(), key, v.Kind)
+			ok = false
+		}
+	}
+	return ok
+}
+
 // hermesUserOwnsTwoBAProvider reports whether root has a `providers.2ba`
 // entry that is not under the installer's marker — i.e. the user
 // owns the 2ba provider entry. We use this to leave the entry alone on
@@ -364,7 +399,7 @@ func uninstallHermesConfig(path string) bool {
 // the matching model.default / model.provider slots, and the
 // __2ba marker. A file without the marker is left untouched (returns
 // removed=false). A corrupt file returns an error.
-func removeHermesProvider(path string, model string) (bool, error) {
+func removeHermesProvider(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -395,9 +430,13 @@ func removeHermesProvider(path string, model string) (bool, error) {
 		}
 	}
 	if modelBlock := mapGet(root, "model"); modelBlock != nil {
-		// Only clear slots the installer wrote. A user's own default
-		// (`openrouter:llama3`) survives a 2ba uninstall.
-		if d := mapGet(modelBlock, "default"); d != nil && d.Value == "2ba:"+model {
+		// Clear slots the installer wrote. The `2ba:` prefix identifies
+		// the default as installer-managed regardless of which model
+		// the uninstall was invoked with — a user who installed with
+		// `--model foo` and runs a plain `--uninstall` later still has
+		// `model.default = 2ba:foo` removed. User-set values
+		// (`openrouter:llama3`, etc.) survive.
+		if d := mapGet(modelBlock, "default"); d != nil && isInstallerTwoBADefault(d.Value) {
 			if mapDelete(modelBlock, "default") {
 				removed = true
 			}
