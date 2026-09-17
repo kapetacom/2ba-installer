@@ -114,21 +114,20 @@ func patchOpenclawModel(provider any, model string) bool {
 	return found && changed
 }
 
-// openclawHasModel reports whether any provider in providers has a model with
-// id == model — the predicate that decides whether a "2ba" provider is
-// installer-managed (and therefore eligible for upgrade) or user-managed.
-func openclawHasModel(providers map[string]any, model string) bool {
-	for _, raw := range providers {
-		p, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		models, _ := p["models"].([]any)
-		for _, entry := range models {
-			m, ok := entry.(map[string]any)
-			if ok && m["id"] == model {
-				return true
-			}
+// openclawProviderHasModel reports whether a single provider entry holds a
+// model with id == model. It is the predicate that decides whether a "2ba"
+// provider is installer-managed (and therefore eligible for upgrade) or
+// user-managed.
+func openclawProviderHasModel(provider any, model string) bool {
+	p, ok := provider.(map[string]any)
+	if !ok {
+		return false
+	}
+	models, _ := p["models"].([]any)
+	for _, entry := range models {
+		m, ok := entry.(map[string]any)
+		if ok && m["id"] == model {
+			return true
 		}
 	}
 	return false
@@ -181,16 +180,23 @@ func ConfigureOpenclaw(e *Env) {
 	if existing, exists := providers["2ba"]; exists {
 		// A "2ba" provider without our model id is user-managed; the
 		// installer never touches it, even on upgrade runs.
-		if !openclawHasModel(map[string]any{"2ba": existing}, e.Model) {
+		if !openclawProviderHasModel(existing, e.Model) {
 			e.notef("OpenClaw — already configured")
 			return
 		}
-		if !patchOpenclawModel(existing, e.Model) {
+		capChanged := patchOpenclawModel(existing, e.Model)
+		defaultChanged := openclawSetDefault(obj, e.Model)
+		if !capChanged && !defaultChanged {
 			e.notef("OpenClaw — already configured")
 			return
 		}
 		if e.DryRun {
-			e.logf("would add model capabilities to the existing \"2ba\" provider in %s", cfg)
+			if capChanged {
+				e.logf("would add model capabilities to the existing \"2ba\" provider in %s", cfg)
+			}
+			if defaultChanged {
+				e.logf("would set agents.defaults.model to {primary: \"2ba/%s\"} in %s", e.Model, cfg)
+			}
 			return
 		}
 		e.backup(cfg)
@@ -198,7 +204,13 @@ func ConfigureOpenclaw(e *Env) {
 			e.warnf("could not write %s: %v", cfg, err)
 			return
 		}
-		e.logf("OpenClaw: model capabilities added to the existing \"2ba\" provider (%s)", cfg)
+		what := "model capabilities added"
+		if capChanged && defaultChanged {
+			what = "model capabilities + default model added"
+		} else if defaultChanged {
+			what = "default model added"
+		}
+		e.logf("OpenClaw: %s to the existing \"2ba\" provider (%s)", what, cfg)
 		return
 	}
 	if e.DryRun {
@@ -230,10 +242,13 @@ func ConfigureOpenclaw(e *Env) {
 	e.logf("OpenClaw: provider \"2ba\" added, default model 2ba/%s (%s)", e.Model, cfg)
 }
 
-// openclawSetDefault sets agents.defaults.model.primary = "2ba/<model>" only
-// when no default is already configured. A pre-existing object form
-// (primary/fallbacks) is left alone, as is any non-map shape.
-func openclawSetDefault(obj map[string]any, model string) {
+// openclawSetDefault ensures agents.defaults.model is the object form
+// {primary: "2ba/<model>"} the installer writes, returning true when the
+// config was changed. A missing default slot is filled; the legacy string
+// form "2ba/<model>" that older installers wrote is upgraded to the object
+// form (so the corresponding uninstall can recognise and remove it). Any
+// other value is treated as user-managed and left alone.
+func openclawSetDefault(obj map[string]any, model string) bool {
 	agents, _ := obj["agents"].(map[string]any)
 	if agents == nil {
 		agents = map[string]any{}
@@ -244,16 +259,27 @@ func openclawSetDefault(obj map[string]any, model string) {
 		defaults = map[string]any{}
 		agents["defaults"] = defaults
 	}
-	if _, present := defaults["model"]; present {
-		return
+	target := map[string]any{"primary": "2ba/" + model}
+	if existing, present := defaults["model"]; present {
+		if m, ok := existing.(map[string]any); ok && m["primary"] == target["primary"] {
+			return false
+		}
+		if s, ok := existing.(string); ok && s == target["primary"] {
+			defaults["model"] = target
+			return true
+		}
+		return false
 	}
-	defaults["model"] = "2ba/" + model
+	defaults["model"] = target
+	return true
 }
 
 // openclawConfigManaged reports whether path holds a "2ba" provider whose
 // models include one with id == model — the predicate the uninstall uses to
-// decide whether the file is installer-managed. Missing, corrupt, or
-// user-managed files report false.
+// decide whether the file is installer-managed. Only the "2ba" provider is
+// considered: a sibling provider that happens to carry a model with the same
+// id does not make the "2ba" provider installer-managed. Missing, corrupt,
+// or user-managed files report false.
 func openclawConfigManaged(path, model string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -271,15 +297,16 @@ func openclawConfigManaged(path, model string) bool {
 	if providers == nil {
 		return false
 	}
-	return openclawHasModel(providers, model)
+	return openclawProviderHasModel(providers["2ba"], model)
 }
 
-// removeOpenclawProvider drops the "2ba" provider from models.providers and
-// the matching default-model slot, rewriting it. A file that holds no
-// matching provider is left untouched (returns removed=false); a corrupt file
-// returns an error so the caller can surface a warning. The provider's other
-// models, sibling providers, and the installer's models.mode / sibling
-// agents.defaults entries all survive the rewrite.
+// removeOpenclawProvider drops the installer-owned model entry from the "2ba"
+// provider and the matching default-model slot, rewriting the file. The
+// "2ba" provider itself is only deleted when no models remain in it; a file
+// that holds no matching model is left untouched (returns removed=false); a
+// corrupt file returns an error so the caller can surface a warning. Sibling
+// providers, the installer's models.mode, and sibling agents.defaults entries
+// all survive the rewrite.
 func removeOpenclawProvider(path, model string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -294,15 +321,42 @@ func removeOpenclawProvider(path, model string) (bool, error) {
 	}
 	models, _ := obj["models"].(map[string]any)
 	providers, _ := models["providers"].(map[string]any)
-	if _, ok := providers["2ba"]; !ok {
+	provider, ok := providers["2ba"].(map[string]any)
+	if !ok {
 		return false, nil
 	}
-	delete(providers, "2ba")
+	entries, _ := provider["models"].([]any)
 	defaultModel := "2ba/" + model
+	kept := entries[:0]
+	for _, entry := range entries {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			kept = append(kept, entry)
+			continue
+		}
+		if m["id"] == model {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if len(kept) == len(entries) {
+		// nothing matched; leave the file alone
+		return false, nil
+	}
+	if len(kept) == 0 {
+		delete(providers, "2ba")
+	} else {
+		provider["models"] = kept
+	}
+	// Drop the installer's default-model slot when it matches the object
+	// form the installer writes: {primary: "2ba/<model>"}. A user's own
+	// string form is left alone (a re-run by an older installer wrote it).
 	if agents, _ := obj["agents"].(map[string]any); agents != nil {
 		if defaults, _ := agents["defaults"].(map[string]any); defaults != nil {
-			if m, ok := defaults["model"].(string); ok && m == defaultModel {
-				delete(defaults, "model")
+			if m, ok := defaults["model"].(map[string]any); ok {
+				if p, _ := m["primary"].(string); p == defaultModel {
+					delete(defaults, "model")
+				}
 			}
 		}
 	}

@@ -1727,8 +1727,12 @@ func TestOpenclawAddCreatesFile(t *testing.T) {
 	if m.ContextWindow != 262144 || m.MaxTokens != 8192 {
 		t.Errorf("model limits wrong: %+v\n%s", m, data)
 	}
-	if got := root.Agents.Defaults.Model; got != "2ba/amber" {
-		t.Errorf("agents.defaults.model = %v, want \"2ba/amber\":\n%s", got, data)
+	if got := root.Agents.Defaults.Model; got == nil {
+		t.Errorf("agents.defaults.model missing:\n%s", data)
+	} else if m, ok := got.(map[string]any); !ok {
+		t.Errorf("agents.defaults.model = %v, want object form:\n%s", got, data)
+	} else if m["primary"] != "2ba/amber" {
+		t.Errorf("agents.defaults.model.primary = %v, want \"2ba/amber\":\n%s", m["primary"], data)
 	}
 	if st, _ := os.Stat(openclawConfig(home)); st.Mode().Perm() != 0o600 {
 		t.Errorf("config perms = %v, want 0600", st.Mode().Perm())
@@ -1812,7 +1816,7 @@ func TestOpenclawUpgradesOldEntry(t *testing.T) {
 	ocPath := openclawConfig(home)
 	mustMkdir(t, filepath.Dir(ocPath))
 	// exactly what a pre-vision installer would write: our model, no input/cost/etc.
-	existing := `{"models":{"providers":{"2ba":{"baseUrl":"` + testBase + `","apiKey":"user-rotated-key","api":"openai-completions","timeoutSeconds":300,"models":[{"id":"amber","name":"Amber (2ba.ai)"}]}},"agents":{"defaults":{"model":"2ba/amber"}}}}`
+	existing := `{"models":{"providers":{"2ba":{"baseUrl":"` + testBase + `","apiKey":"user-rotated-key","api":"openai-completions","timeoutSeconds":300,"models":[{"id":"amber","name":"Amber (2ba.ai)"}]}}}}`
 	mustWrite(t, ocPath, existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 
@@ -1840,7 +1844,12 @@ func TestOpenclawUpgradesOldEntry(t *testing.T) {
 	if _, has := m["cost"]; !has {
 		t.Errorf("cost block not backfilled:\n%s", data)
 	}
-	if !strings.Contains(buf.String(), "model capabilities added") {
+	// The installer also fills a missing default-model slot.
+	dm, _ := cfg["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)
+	if dm == nil || dm["primary"] != "2ba/amber" {
+		t.Errorf("agents.defaults.model not backfilled to object form:\n%s", data)
+	}
+	if !strings.Contains(buf.String(), "model capabilities") {
 		t.Errorf("expected upgrade notice:\n%s", buf.String())
 	}
 }
@@ -1851,7 +1860,29 @@ func TestOpenclawCompleteEntryUntouched(t *testing.T) {
 	mustMkdir(t, filepath.Dir(ocPath))
 	// user-customized values must survive a re-run: false reasoning and
 	// single-element input are the user's choice
-	existing := `{"models":{"providers":{"2ba":{"baseUrl":"` + testBase + `","apiKey":"k","api":"openai-completions","timeoutSeconds":300,"models":[{"id":"amber","name":"Amber (2ba.ai)","reasoning":false,"input":["text"],"contextWindow":128000,"maxTokens":4096,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}},"agents":{"defaults":{"model":"2ba/amber"}}}}`
+	seedSeed := map[string]any{
+		"models": map[string]any{
+			"providers": map[string]any{
+				"2ba": map[string]any{
+					"baseUrl": testBase, "apiKey": "k", "api": "openai-completions",
+					"timeoutSeconds": 300,
+					"models": []any{
+						map[string]any{
+							"id": "amber", "name": "Amber (2ba.ai)",
+							"reasoning": false, "input": []string{"text"},
+							"contextWindow": 128000, "maxTokens": 4096,
+							"cost": map[string]any{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+						},
+					},
+				},
+			},
+		},
+		"agents": map[string]any{
+			"defaults": map[string]any{"model": map[string]any{"primary": "2ba/amber"}},
+		},
+	}
+	existingBytes, _ := json.MarshalIndent(seedSeed, "", "  ")
+	existing := string(existingBytes)
 	mustWrite(t, ocPath, existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 
@@ -1912,7 +1943,29 @@ func TestOpenclawDryRunExisting(t *testing.T) {
 	home := t.TempDir()
 	ocPath := openclawConfig(home)
 	mustMkdir(t, filepath.Dir(ocPath))
-	existing := `{"models":{"providers":{"2ba":{"baseUrl":"` + testBase + `","apiKey":"k","api":"openai-completions","timeoutSeconds":300,"models":[{"id":"amber","name":"Amber (2ba.ai)","reasoning":true,"input":["text","image"],"contextWindow":262144,"maxTokens":8192,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}},"agents":{"defaults":{"model":"2ba/amber"}}}}`
+	seedSeed := map[string]any{
+		"models": map[string]any{
+			"providers": map[string]any{
+				"2ba": map[string]any{
+					"baseUrl": testBase, "apiKey": "k", "api": "openai-completions",
+					"timeoutSeconds": 300,
+					"models": []any{
+						map[string]any{
+							"id": "amber", "name": "Amber (2ba.ai)", "reasoning": true,
+							"input":         []string{"text", "image"},
+							"contextWindow": 262144, "maxTokens": 8192,
+							"cost": map[string]any{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+						},
+					},
+				},
+			},
+		},
+		"agents": map[string]any{
+			"defaults": map[string]any{"model": map[string]any{"primary": "2ba/amber"}},
+		},
+	}
+	existingBytes, _ := json.MarshalIndent(seedSeed, "", "  ")
+	existing := string(existingBytes)
 	mustWrite(t, ocPath, existing)
 	env, buf := newEnv(t, home, "amber", "k", true)
 	ConfigureOpenclaw(env)
@@ -1953,7 +2006,7 @@ func TestUninstallOpenclaw(t *testing.T) {
 			},
 		},
 		"agents": map[string]any{
-			"defaults": map[string]any{"model": "2ba/amber"},
+			"defaults": map[string]any{"model": map[string]any{"primary": "2ba/amber"}},
 		},
 	}
 	seedBytes, _ := json.MarshalIndent(seedSeed, "", "  ")
@@ -1997,5 +2050,159 @@ func TestUninstallOpenclawNoMatch(t *testing.T) {
 	}
 	if _, err := os.Stat(ocPath + ".bak.2ba"); err == nil {
 		t.Errorf("uninstall without a 2ba entry left a backup")
+	}
+}
+
+// A "2ba" provider that the installer wrote can also carry models the user
+// added under the same provider key. Uninstall must remove only the
+// installer-owned model and leave the provider (and the user's sibling
+// model) in place — the provider is only dropped when nothing remains.
+func TestUninstallOpenclawKeepsSiblingModel(t *testing.T) {
+	home := t.TempDir()
+	ocPath := openclawConfig(home)
+	mustMkdir(t, filepath.Dir(ocPath))
+	seed := `{"models":{"providers":{"2ba":{"baseUrl":"` + testBase + `","apiKey":"k","api":"openai-completions","timeoutSeconds":300,"models":[{"id":"amber","name":"Amber (2ba.ai)"},{"id":"user-extra","name":"User Extra"}]}}}}`
+	mustWrite(t, ocPath, seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	data, _ := os.ReadFile(ocPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	p, ok := cfg["models"].(map[string]any)["providers"].(map[string]any)["2ba"].(map[string]any)
+	if !ok {
+		t.Fatalf("2ba provider dropped despite a surviving model:\n%s", data)
+	}
+	entries, _ := p["models"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 model remaining, got %d:\n%s", len(entries), data)
+	}
+	if entries[0].(map[string]any)["id"] != "user-extra" {
+		t.Errorf("wrong model kept; want user-extra, got %v:\n%s", entries[0], data)
+	}
+}
+
+// A user's own default-model value is left alone — uninstall only removes
+// the object form the installer writes ({primary: "2ba/<model>"}). The 2ba
+// provider is removed because its only model was installer-owned.
+func TestUninstallOpenclawLeavesUserDefault(t *testing.T) {
+	home := t.TempDir()
+	ocPath := openclawConfig(home)
+	mustMkdir(t, filepath.Dir(ocPath))
+	seedSeed := map[string]any{
+		"models": map[string]any{
+			"providers": map[string]any{
+				"2ba": map[string]any{
+					"baseUrl": testBase, "apiKey": "k", "api": "openai-completions",
+					"timeoutSeconds": 300,
+					"models": []any{
+						map[string]any{"id": "amber", "name": "Amber (2ba.ai)"},
+					},
+				},
+			},
+		},
+		"agents": map[string]any{
+			"defaults": map[string]any{"model": map[string]any{"primary": "some-other-model"}},
+		},
+	}
+	seedBytes, _ := json.MarshalIndent(seedSeed, "", "  ")
+	mustWrite(t, ocPath, string(seedBytes))
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	data, _ := os.ReadFile(ocPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	// The installer-owned 2ba provider is dropped: it had no other models.
+	if _, present := cfg["models"].(map[string]any)["providers"].(map[string]any)["2ba"]; present {
+		t.Errorf("2ba provider should have been dropped:\n%s", data)
+	}
+	defaults := cfg["agents"].(map[string]any)["defaults"].(map[string]any)
+	if defaults["model"].(map[string]any)["primary"] != "some-other-model" {
+		t.Errorf("user's default model was changed: %v:\n%s", defaults["model"], data)
+	}
+}
+
+// A legacy installer's string-form default gets upgraded to the documented
+// object form so the uninstall path can recognise it. The shape is the
+// installer's own previous default ("2ba/<model>"), not a user value.
+func TestOpenclawUpgradesLegacyStringDefault(t *testing.T) {
+	home := t.TempDir()
+	ocPath := openclawConfig(home)
+	mustMkdir(t, filepath.Dir(ocPath))
+	seedSeed := map[string]any{
+		"models": map[string]any{
+			"providers": map[string]any{
+				"2ba": map[string]any{
+					"baseUrl": testBase, "apiKey": "k", "api": "openai-completions",
+					"timeoutSeconds": 300,
+					"models": []any{
+						map[string]any{
+							"id": "amber", "name": "Amber (2ba.ai)", "reasoning": true,
+							"input":         []string{"text", "image"},
+							"contextWindow": 262144, "maxTokens": 8192,
+							"cost": map[string]any{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+						},
+					},
+				},
+			},
+		},
+		"agents": map[string]any{
+			"defaults": map[string]any{"model": "2ba/amber"},
+		},
+	}
+	existingBytes, _ := json.MarshalIndent(seedSeed, "", "  ")
+	mustWrite(t, ocPath, string(existingBytes))
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureOpenclaw(env)
+
+	data, _ := os.ReadFile(ocPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	defaults := cfg["agents"].(map[string]any)["defaults"].(map[string]any)
+	m, ok := defaults["model"].(map[string]any)
+	if !ok {
+		t.Fatalf("agents.defaults.model not upgraded to object form: %v\n%s", defaults["model"], data)
+	}
+	if m["primary"] != "2ba/amber" {
+		t.Errorf("agents.defaults.model.primary = %v, want \"2ba/amber\":\n%s", m["primary"], data)
+	}
+	if !strings.Contains(buf.String(), "default model added") {
+		t.Errorf("expected default-model-added notice:\n%s", buf.String())
+	}
+}
+
+// A "2ba" provider that is user-managed (no installer-owned model) must not
+// be removed just because a sibling provider happens to carry a model with
+// the same id — openclawConfigManaged must only consult the "2ba" provider.
+func TestUninstallOpenclawIgnoresSiblingModelMatch(t *testing.T) {
+	home := t.TempDir()
+	ocPath := openclawConfig(home)
+	mustMkdir(t, filepath.Dir(ocPath))
+	seed := `{"models":{"providers":{"2ba":{"baseUrl":"http://example","apiKey":"user-secret","api":"openai-completions","models":[{"id":"other"}]},"mine":{"baseUrl":"http://example","apiKey":"k","api":"openai-completions","models":[{"id":"amber"}]}}}}`
+	mustWrite(t, ocPath, seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+
+	data, _ := os.ReadFile(ocPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, data)
+	}
+	providers := cfg["models"].(map[string]any)["providers"].(map[string]any)
+	if _, present := providers["2ba"]; !present {
+		t.Errorf("user-managed 2ba provider was removed:\n%s", data)
+	}
+	if _, present := providers["mine"]; !present {
+		t.Errorf("sibling provider was removed:\n%s", data)
+	}
+	if _, err := os.Stat(ocPath + ".bak.2ba"); err == nil {
+		t.Errorf("uninstall without an installer-owned entry left a backup")
 	}
 }
