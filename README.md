@@ -30,7 +30,7 @@ working even when run through a pipe.
 | claude   | points Claude Code at 2ba via `ANTHROPIC_*` env vars in `~/.claude/settings.json` (needs the gateway's Anthropic Messages endpoint) |
 | pi       | adds a `2ba` OpenAI-compatible provider to Pi's `~/.pi/agent/models.json` |
 | openclaw | adds a `2ba` OpenAI-compatible provider to OpenClaw's `~/.openclaw/openclaw.json` and sets it as the default agent model |
-| hermes   | prints a copy-pasteable YAML snippet for Hermes Agent's `~/.hermes/config.yaml` |
+| hermes   | merges a `2ba` provider and default-model block into Hermes Agent's `~/.hermes/config.yaml` in place |
 
 The API key is always stored at `~/.config/2ba/2BA_API_KEY` (mode `0600`).
 

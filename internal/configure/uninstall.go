@@ -179,9 +179,9 @@ func Uninstall(e *Env) {
 	if hc := hermesConfigFile(); fileExists(hc) {
 		if e.DryRun {
 			e.logf("would remove the 2ba provider from %s", hc)
-		} else if uninstallHermesConfig(hc, e) {
+		} else if uninstallHermesConfig(hc) {
 			e.backup(hc)
-			if removed, err := removeHermesProvider(hc, e); err != nil {
+			if removed, err := removeHermesProvider(hc, e.Model); err != nil {
 				e.warnf("%s is not valid YAML — leaving it untouched", hc)
 			} else if removed {
 				e.logf("removed 2ba entry from %s", hc)

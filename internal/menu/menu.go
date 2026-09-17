@@ -40,7 +40,7 @@ var (
 		"Claude Code (~/.claude)",
 		"Pi coding agent (~/.pi/agent)",
 		"OpenClaw CLI (~/.openclaw)",
-		"Hermes Agent (prints YAML snippet)",
+		"Hermes Agent (~/.hermes, in-place merge)",
 	}
 )
 
