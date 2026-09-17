@@ -173,6 +173,22 @@ func Uninstall(e *Env) {
 		}
 	}
 
+	// Hermes config (YAML) — same backup-only-when-matching rule.
+	// yaml.v3 round-trips user comments and key order; uninstall only
+	// touches the installer's own entries.
+	if hc := hermesConfigFile(); fileExists(hc) {
+		if e.DryRun {
+			e.logf("would remove the 2ba provider from %s", hc)
+		} else if uninstallHermesConfig(hc, e) {
+			e.backup(hc)
+			if removed, err := removeHermesProvider(hc, e); err != nil {
+				e.warnf("%s is not valid YAML — leaving it untouched", hc)
+			} else if removed {
+				e.logf("removed 2ba entry from %s", hc)
+			}
+		}
+	}
+
 	// Claude Code settings (env block), same backup-only-when-matching rule.
 	if cs := claudeSettingsFile(); fileExists(cs) {
 		base := claudeBaseURL(e.APIBase)

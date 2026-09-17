@@ -256,7 +256,7 @@ func main() {
 		configure.ConfigureOpenclaw(env)
 	}
 	if sel.Hermes {
-		configure.InstructHermes(env)
+		configure.ConfigureHermes(env)
 	}
 
 	fmt.Println()

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -2210,77 +2212,254 @@ func TestUninstallOpenclawIgnoresSiblingModelMatch(t *testing.T) {
 
 // ---------------------------------------------------------------------- hermes
 
-func TestHermesInstructWhenInstalled(t *testing.T) {
+// hermesConfig returns the installer's path to ~/.hermes/config.yaml in
+// the test's fake home.
+func hermesConfig(home string) string {
+	return filepath.Join(home, ".hermes", "config.yaml")
+}
+
+// readHermes reads ~/.hermes/config.yaml into a string map (only one level
+// deep — sufficient for the assertions below).
+func readHermes(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return doc
+}
+
+// On a fresh install with no ~/.hermes/config.yaml the installer creates
+// the home dir (0700) and writes the config file (0600) with the
+// providers.2ba and model.* seeds.
+func TestHermesAddCreatesFile(t *testing.T) {
 	home := t.TempDir()
-	mustMkdir(t, filepath.Join(home, ".hermes"))
 	env, buf := newEnv(t, home, "amber", "tuba-sk-hermes-key", false)
 
-	InstructHermes(env)
+	ConfigureHermes(env)
 
-	// The snippet must point at the user's config.yaml and contain the
-	// documented key names so a copy-paste into ~/.hermes/config.yaml
-	// works without further editing.
-	out := buf.String()
-	for _, want := range []string{
-		filepath.Join(home, ".hermes", "config.yaml"),
-		"providers:",
-		"2ba:",
-		"api: " + testBase,
-		"api_key: tuba-sk-hermes-key",
-		"transport: chat_completions",
-		"default_model: amber",
-		"model:",
-		"provider: 2ba",
-		"default: 2ba:amber",
-		// capability hint for amber, which is not in models.dev
-		"supports_vision: true",
-		"supports_reasoning: true",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in instruction output:\n%s", want, out)
-		}
+	cfg := hermesConfig(home)
+	if st, _ := os.Stat(cfg); st == nil || st.Mode().Perm() != 0o600 {
+		t.Errorf("config perms wrong: %v", st)
 	}
-	// Instruct-mode must not touch the user's config.yaml — the file
-	// does not even exist in this test, and no backup should be left
-	// behind.
-	if _, err := os.Stat(filepath.Join(home, ".hermes", "config.yaml")); !os.IsNotExist(err) {
-		t.Errorf("instruct-mode created ~/.hermes/config.yaml")
+	if st, _ := os.Stat(filepath.Join(home, ".hermes")); st == nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
+		t.Errorf("home perms wrong: %v", st)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".hermes", "config.yaml.bak.2ba")); err == nil {
-		t.Errorf("instruct-mode left a backup")
+	doc := readHermes(t, cfg)
+	providers, _ := doc["providers"].(map[string]any)
+	p, ok := providers["2ba"].(map[string]any)
+	if !ok {
+		t.Fatalf("providers.2ba missing:\n%s", buf.String())
+	}
+	if p["api"] != testBase || p["api_key"] != "tuba-sk-hermes-key" ||
+		p["transport"] != "chat_completions" || p["default_model"] != "amber" {
+		t.Errorf("providers.2ba fields wrong: %v", p)
+	}
+	model, _ := doc["model"].(map[string]any)
+	if model["default"] != "2ba:amber" || model["provider"] != "2ba" {
+		t.Errorf("model block wrong: %v", model)
+	}
+	if !strings.Contains(buf.String(), "Hermes: provider") {
+		t.Errorf("expected add notice:\n%s", buf.String())
 	}
 }
 
-// When neither the home dir nor `hermes` is on PATH, InstructHermes is a
-// no-op (same detection rule as InstructContinue and InstructCursor: no
-// install to instruct → stay silent).
-func TestHermesSilentWhenAbsent(t *testing.T) {
+// A user-owned config.yaml with a sibling provider and a custom model
+// default must survive the installer's merge — only the installer's own
+// keys are written.
+func TestHermesAddPreservesUserKeys(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("PATH", t.TempDir()) // clear PATH so `hermes` cannot be found
-	env, buf := newEnv(t, home, "amber", "k", false)
-	InstructHermes(env)
-	if buf.Len() != 0 {
-		t.Errorf("expected silent no-op, got:\n%s", buf.String())
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	userCfg := "providers:\n  openrouter:\n    api: https://openrouter.ai/api/v1\n    api_key: user-secret\n    transport: chat_completions\nmodel:\n  provider: openrouter\n  default: openrouter:llama3\n"
+	mustWrite(t, hermesConfig(home), userCfg)
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	ConfigureHermes(env)
+
+	doc := readHermes(t, hermesConfig(home))
+	providers, _ := doc["providers"].(map[string]any)
+	if _, present := providers["openrouter"]; !present {
+		t.Errorf("user provider lost:\n%v", providers)
+	}
+	if _, present := providers["2ba"]; !present {
+		t.Errorf("2ba provider missing:\n%v", providers)
+	}
+	model, _ := doc["model"].(map[string]any)
+	if model["default"] != "openrouter:llama3" {
+		t.Errorf("user model.default was overwritten: %v", model)
+	}
+	if model["provider"] != "openrouter" {
+		t.Errorf("user model.provider was overwritten: %v", model)
 	}
 }
 
-// Instruct-mode refuses to print a snippet with an empty model or key so
-// the user does not paste a broken entry into their config.yaml.
+// Re-running on a complete entry is a no-op: no backup is taken.
+func TestHermesCompleteEntryUntouched(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	existing := "providers:\n  2ba:\n    api: " + testBase + "\n    api_key: k\n    transport: chat_completions\n    default_model: amber\nmodel:\n  provider: 2ba\n  default: 2ba:amber\n"
+	mustWrite(t, hermesConfig(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureHermes(env)
+
+	if got, _ := os.ReadFile(hermesConfig(home)); string(got) != existing {
+		t.Errorf("complete entry was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+	if _, err := os.Stat(hermesConfig(home) + ".bak.2ba"); err == nil {
+		t.Errorf("no-op run left a backup")
+	}
+}
+
+// A user-owned "2ba" provider (no installer-written api_key) must be
+// left alone.
+func TestHermesUserOwned2baUntouched(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	existing := "providers:\n  2ba:\n    api: https://other.example\n    api_key: user-secret\n    transport: chat_completions\n    default_model: other\n"
+	mustWrite(t, hermesConfig(home), existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureHermes(env)
+
+	if got, _ := os.ReadFile(hermesConfig(home)); string(got) != existing {
+		t.Errorf("user-managed 2ba provider was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+// A pre-vision installer entry that has our key but is missing newer
+// fields (e.g. default_model) is backfilled in place — no clobber of
+// the user's other providers.
+func TestHermesUpgradesOldEntry(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	existing := "providers:\n  2ba:\n    api: " + testBase + "\n    api_key: user-rotated-key\n    transport: chat_completions\n"
+	mustWrite(t, hermesConfig(home), existing)
+	env, buf := newEnv(t, home, "amber", "user-rotated-key", false)
+
+	ConfigureHermes(env)
+
+	doc := readHermes(t, hermesConfig(home))
+	p := doc["providers"].(map[string]any)["2ba"].(map[string]any)
+	if p["api_key"] != "user-rotated-key" {
+		t.Errorf("user api_key overwritten: %v", p)
+	}
+	if p["default_model"] != "amber" {
+		t.Errorf("default_model not backfilled: %v", p)
+	}
+	if !strings.Contains(buf.String(), "Hermes: provider") {
+		t.Errorf("expected add notice:\n%s", buf.String())
+	}
+}
+
+// Dry-run does not touch the file (and leaves no backup).
+func TestHermesDryRun(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	env, buf := newEnv(t, home, "amber", "k", true)
+	ConfigureHermes(env)
+	if !strings.Contains(buf.String(), "would add provider") {
+		t.Errorf("dry-run plan missing hermes entry:\n%s", buf.String())
+	}
+	if _, err := os.Stat(hermesConfig(home)); !os.IsNotExist(err) {
+		t.Errorf("dry run created the hermes config")
+	}
+}
+
+// A corrupt YAML file is left untouched.
+func TestHermesMalformedYAML(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	mustWrite(t, hermesConfig(home), "providers:\n  2ba:\n    api: : :\n  this is : not valid: yaml")
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureHermes(env)
+	if !strings.Contains(buf.String(), "not valid YAML") {
+		t.Errorf("expected malformed-YAML warning:\n%s", buf.String())
+	}
+}
+
+// When neither the home dir nor `hermes` is on PATH, ConfigureHermes is
+// a no-op (same detection rule as ConfigurePi / ConfigureClaude).
+func TestHermesNotDetected(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	env, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureHermes(env)
+	if !strings.Contains(buf.String(), "Hermes not detected") {
+		t.Errorf("expected not-detected warning:\n%s", buf.String())
+	}
+}
+
+// Refuses to write with an empty model or API key.
 func TestHermesRefusesEmpty(t *testing.T) {
 	home := t.TempDir()
 	mustMkdir(t, filepath.Join(home, ".hermes"))
 	t.Run("empty model", func(t *testing.T) {
 		env, buf := newEnv(t, home, "", "k", false)
-		InstructHermes(env)
+		ConfigureHermes(env)
 		if !strings.Contains(buf.String(), "empty model") {
-			t.Errorf("expected empty-model warning, got:\n%s", buf.String())
+			t.Errorf("expected empty-model warning:\n%s", buf.String())
 		}
 	})
 	t.Run("empty key", func(t *testing.T) {
 		env, buf := newEnv(t, home, "amber", "", false)
-		InstructHermes(env)
+		ConfigureHermes(env)
 		if !strings.Contains(buf.String(), "empty") {
-			t.Errorf("expected empty-key warning, got:\n%s", buf.String())
+			t.Errorf("expected empty-key warning:\n%s", buf.String())
 		}
 	})
+}
+
+// Uninstall removes only our entries; sibling providers and user-set
+// model.default survive.
+func TestUninstallHermes(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	seed := "providers:\n  2ba:\n    api: " + testBase + "\n    api_key: tuba-sk-old\n    transport: chat_completions\n    default_model: amber\n  openrouter:\n    api: https://openrouter.ai/api/v1\n    api_key: user-secret\n    transport: chat_completions\nmodel:\n  provider: openrouter\n  default: openrouter:llama3\n"
+	mustWrite(t, hermesConfig(home), seed)
+	env, _ := newEnv(t, home, "amber", "tuba-sk-old", false)
+	Uninstall(env)
+
+	doc := readHermes(t, hermesConfig(home))
+	providers, _ := doc["providers"].(map[string]any)
+	if _, present := providers["2ba"]; present {
+		t.Errorf("2ba provider not removed:\n%v", providers)
+	}
+	if _, present := providers["openrouter"]; !present {
+		t.Errorf("user provider removed:\n%v", providers)
+	}
+	model, _ := doc["model"].(map[string]any)
+	if model["default"] != "openrouter:llama3" {
+		t.Errorf("user model.default changed: %v", model)
+	}
+	if model["provider"] != "openrouter" {
+		t.Errorf("user model.provider changed: %v", model)
+	}
+}
+
+// Uninstall of a config that has no installer-owned entry leaves the
+// file byte-identical and without a backup.
+func TestUninstallHermesNoMatch(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".hermes"))
+	seed := "providers:\n  openrouter:\n    api: https://openrouter.ai/api/v1\n    api_key: user-secret\n    transport: chat_completions\nmodel:\n  provider: openrouter\n  default: openrouter:llama3\n"
+	mustWrite(t, hermesConfig(home), seed)
+	env, _ := newEnv(t, home, "amber", "k", false)
+	Uninstall(env)
+	if got, _ := os.ReadFile(hermesConfig(home)); string(got) != seed {
+		t.Errorf("unrelated hermes config was rewritten:\n%s", got)
+	}
+	if _, err := os.Stat(hermesConfig(home) + ".bak.2ba"); err == nil {
+		t.Errorf("uninstall without a 2ba entry left a backup")
+	}
 }
