@@ -24,6 +24,7 @@ type Services struct {
 	Twocode  bool
 	Claude   bool
 	Pi       bool
+	Openclaw bool
 
 	// ShellRC is the first existing shell rc file ("" if none).
 	ShellRC string
@@ -107,6 +108,7 @@ func Detect() Services {
 	s.Twocode = dirExists(configure.TwocodeDataDir())
 	s.Claude = dirExists(configure.ClaudeConfigDir()) || onPath("claude")
 	s.Pi = dirExists(configure.PiAgentDir()) || onPath("pi")
+	s.Openclaw = dirExists(configure.OpenclawStateDir()) || onPath("openclaw")
 
 	return s
 }
@@ -134,6 +136,8 @@ func (s Services) Has(name string) bool {
 		return s.Claude
 	case "pi":
 		return s.Pi
+	case "openclaw":
+		return s.Openclaw
 	}
 	return false
 }

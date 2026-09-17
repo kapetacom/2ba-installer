@@ -28,7 +28,7 @@ var (
 // 2ba-code is a supported service (Selections.Twocode, --services 2ba-code)
 // but is intentionally not a row: it is not offered in the picker yet.
 var (
-	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude", "pi"}
+	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude", "pi", "openclaw"}
 	descs = []string{
 		"OPENAI_API_KEY/BASE for aider & similar tools",
 		"OpenCode CLI (~/.config/opencode)",
@@ -39,17 +39,18 @@ var (
 		"ZCode CLI / desktop (~/.zcode)",
 		"Claude Code (~/.claude)",
 		"Pi coding agent (~/.pi/agent)",
+		"OpenClaw CLI (~/.openclaw)",
 	}
 )
 
 // Selections is the user's pick, in menu order.
 type Selections struct {
-	Shell, Opencode, Windsurf, Kimi, Continue, Cursor, Zcode, Twocode, Claude, Pi bool
+	Shell, Opencode, Windsurf, Kimi, Continue, Cursor, Zcode, Twocode, Claude, Pi, Openclaw bool
 }
 
 // Any reports whether at least one service is selected.
 func (s Selections) Any() bool {
-	return s.Shell || s.Opencode || s.Windsurf || s.Kimi || s.Continue || s.Cursor || s.Zcode || s.Twocode || s.Claude || s.Pi
+	return s.Shell || s.Opencode || s.Windsurf || s.Kimi || s.Continue || s.Cursor || s.Zcode || s.Twocode || s.Claude || s.Pi || s.Openclaw
 }
 
 // Result is what Run returns after the menu closes.
@@ -59,7 +60,7 @@ type Result struct {
 }
 
 type model struct {
-	sel      [9]bool
+	sel      [10]bool
 	cursor   int
 	quitting bool
 }
@@ -68,10 +69,11 @@ type model struct {
 // row (see names), so its detection pre-tick is dropped here.
 func New(initial detect.Services) model {
 	return model{
-		sel: [9]bool{
+		sel: [10]bool{
 			initial.Shell, initial.Opencode, initial.Windsurf,
 			initial.Kimi, initial.Continue, initial.Cursor,
 			initial.Zcode, initial.Claude, initial.Pi,
+			initial.Openclaw,
 		},
 	}
 }
@@ -103,8 +105,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			if i := int(msg.String()[0] - '1'); i >= 0 && i < len(names) {
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
+			if i := digitIndex(msg.String()[0]); i >= 0 && i < len(names) {
 				m.sel[i] = !m.sel[i]
 			}
 		}
@@ -141,6 +143,19 @@ func padRight(s string, w int) string {
 	return strings.Repeat(" ", w-len(s))
 }
 
+// digitIndex maps a digit byte to its menu row index: '1'…'9' → 0…8, '0' → 9.
+// Anything else returns -1. This lets the keymap stay a single-digit layout
+// while supporting more than nine menu rows.
+func digitIndex(b byte) int {
+	switch b {
+	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return int(b - '1')
+	case '0':
+		return 9
+	}
+	return -1
+}
+
 // Run builds a menu from the detected services, runs it over the given
 // reader/writer, and returns the outcome.
 func Run(stdin io.Reader, stdout io.Writer) (Result, error) {
@@ -153,6 +168,7 @@ func Run(stdin io.Reader, stdout io.Writer) (Result, error) {
 			Shell: final.sel[0], Opencode: final.sel[1], Windsurf: final.sel[2],
 			Kimi: final.sel[3], Continue: final.sel[4], Cursor: final.sel[5],
 			Zcode: final.sel[6], Claude: final.sel[7], Pi: final.sel[8],
+			Openclaw: final.sel[9],
 			// Twocode has no row in the menu yet; it is only ever selected
 			// through --services 2ba-code.
 		},
