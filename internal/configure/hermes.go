@@ -64,6 +64,13 @@ func ConfigureHermes(e *Env) {
 		e.warnf("hermes: refusing to write with an empty model or API key")
 		return
 	}
+	// Make sure the home dir exists before we attempt to read or write.
+	// Hermes may be installed but never run; on a fresh install we need
+	// to create ~/.hermes (0700) ourselves.
+	if err := os.MkdirAll(homeDir, 0o700); err != nil {
+		e.warnf("could not create %s: %v", homeDir, err)
+		return
+	}
 	cfg := hermesConfigFile()
 
 	doc, err := loadHermesYAML(cfg)
@@ -102,10 +109,6 @@ func ConfigureHermes(e *Env) {
 
 	if e.DryRun {
 		e.logf("would add or update provider \"2ba\" in %s", cfg)
-		return
-	}
-	if err := os.MkdirAll(homeDir, 0o700); err != nil {
-		e.warnf("could not create %s: %v", homeDir, err)
 		return
 	}
 	e.backup(cfg)
