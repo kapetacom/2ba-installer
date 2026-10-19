@@ -132,6 +132,10 @@ func TestOpencodeAddKeepsUserProvider(t *testing.T) {
 	if input, _ := mods["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
 		t.Errorf("model must declare image input:\n%s", oc)
 	}
+	// without a limit OpenCode never triggers auto-compaction
+	if lim, _ := m["limit"].(map[string]any); lim["context"] != float64(262144) || lim["output"] != float64(32000) {
+		t.Errorf("model must declare context/output limits:\n%s", oc)
+	}
 }
 
 func TestOpencodeExisting2baUntouched(t *testing.T) {
@@ -194,6 +198,9 @@ func TestOpencodeUpgradesOldEntryWithModelConfig(t *testing.T) {
 	if input, _ := mods["input"].([]any); len(input) != 2 || input[0] != "text" || input[1] != "image" {
 		t.Errorf("modalities not added:\n%s", oc)
 	}
+	if lim, _ := m["limit"].(map[string]any); lim["context"] != float64(262144) || lim["output"] != float64(32000) {
+		t.Errorf("limits not added:\n%s", oc)
+	}
 	if m["name"] != "Amber (2ba.ai)" {
 		t.Errorf("model name changed:\n%s", oc)
 	}
@@ -214,7 +221,8 @@ func TestOpencodeCompleteEntryUntouched(t *testing.T) {
 	// user-customized values must survive a re-run
 	existing := `{"provider": {"2ba": {"models": {"amber": {
 		"name": "Amber (2ba.ai)", "reasoning": false, "interleaved": "reasoning",
-		"modalities": {"input": ["text"], "output": ["text"]}}}}}}`
+		"modalities": {"input": ["text"], "output": ["text"]},
+		"limit": {"context": 128000, "output": 16000}}}}}}`
 	mustWrite(t, ocPath, existing)
 	env, buf := newEnv(t, home, "amber", "k", false)
 

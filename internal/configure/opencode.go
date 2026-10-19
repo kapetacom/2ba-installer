@@ -47,6 +47,22 @@ func opencodeModalities() map[string]any {
 	return map[string]any{"input": []string{"text", "image"}, "output": []string{"text"}}
 }
 
+// opencodeContextSize mirrors the other declarative targets (kimi, openclaw,
+// zcode): 2ba does not advertise a per-model context window, so a conservative
+// value only affects when OpenCode compacts. Without it OpenCode treats the
+// window as unknown and never triggers auto-compaction (only manual /compact
+// and the one-shot overflow recovery work).
+const opencodeContextSize = 262144
+
+// opencodeOutputSize matches OpenCode's own default for models absent from
+// its catalog; declaring it keeps the effective output cap unchanged.
+const opencodeOutputSize = 32000
+
+// opencodeLimit is the limit declaration written for model entries.
+func opencodeLimit() map[string]any {
+	return map[string]any{"context": opencodeContextSize, "output": opencodeOutputSize}
+}
+
 // opencodeModel returns the model entry the installer writes for model: a
 // friendly name, the thinking-model declaration, and the input modalities.
 // 2ba streams thinking as reasoning_content (no middleware mirror, by
@@ -57,14 +73,15 @@ func opencodeModel(model string) map[string]any {
 		"reasoning":   true,
 		"interleaved": "reasoning_content",
 		"modalities":  opencodeModalities(),
+		"limit":       opencodeLimit(),
 	}
 }
 
 // patchOpencodeModel brings the model entry of an existing "2ba" provider up
 // to the current declaration — the upgrade path for configs written by an
-// older installer. Missing thinking and modality fields are added; existing
-// values are never overwritten, and an entry without our model (user-managed)
-// is left alone. It reports whether the config changed.
+// older installer. Missing thinking, modality, and limit fields are added;
+// existing values are never overwritten, and an entry without our model
+// (user-managed) is left alone. It reports whether the config changed.
 func patchOpencodeModel(provider any, model string) bool {
 	p, ok := provider.(map[string]any)
 	if !ok {
@@ -89,6 +106,10 @@ func patchOpencodeModel(provider any, model string) bool {
 	}
 	if _, ok := m["modalities"]; !ok {
 		m["modalities"] = opencodeModalities()
+		changed = true
+	}
+	if _, ok := m["limit"]; !ok {
+		m["limit"] = opencodeLimit()
 		changed = true
 	}
 	return changed
