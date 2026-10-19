@@ -191,18 +191,36 @@ func Uninstall(e *Env) {
 	}
 
 	// Goose: the installer-written custom_providers/2ba.json plus the 2ba
-	// entries in config.yaml. Same backup-only-when-matching rule; a corrupt
-	// file and a user-authored provider file are left untouched.
+	// entries in config.yaml. Removal is gated on the same ownership
+	// predicate the configure path uses (name + api_key_env), so a
+	// user-authored 2ba.json — or an unclassifiable corrupt one — is left
+	// untouched, config.yaml included. Backups happen only immediately
+	// before a real write or removal.
+	gooseFileOurs := false
 	if gp := gooseProviderFile(); fileExists(gp) {
 		if e.DryRun {
-			e.logf("would remove the 2ba provider from %s", gp)
-		} else if removed, err := removeGooseProviderFile(gp); err != nil {
-			e.warnf("%s is not valid JSON — leaving it untouched", gp)
-		} else if removed {
-			e.logf("removed 2ba provider file %s", gp)
+			e.logf("would remove the installer-owned 2ba provider from %s", gp)
+		} else {
+			ours, err := gooseProviderFileIsOurs(gp)
+			switch {
+			case err != nil:
+				e.warnf("%s is not valid JSON — leaving it untouched", gp)
+			case ours:
+				gooseFileOurs = true
+				e.backup(gp)
+				if err := os.Remove(gp); err != nil {
+					e.warnf("could not remove %s: %v", gp, err)
+				} else {
+					e.logf("removed 2ba provider file %s", gp)
+				}
+			}
 		}
+	} else {
+		// No provider file: any 2ba entries in config.yaml are leftovers
+		// from an install whose file was removed by hand — ours to clean.
+		gooseFileOurs = true
 	}
-	if gc := gooseConfigFile(); fileExists(gc) {
+	if gc := gooseConfigFile(); fileExists(gc) && gooseFileOurs {
 		if e.DryRun {
 			e.logf("would remove the 2ba entries from %s", gc)
 		} else if gooseConfigManaged(gc) {

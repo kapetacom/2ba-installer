@@ -260,6 +260,11 @@ func main() {
 	}
 	if sel.Goose {
 		configure.ConfigureGoose(env)
+		if !sel.Shell {
+			// Goose reads its key from the OPENAI_API_KEY env var (env-first
+			// secret resolution); without the shell service nothing exports it.
+			logf("note: Goose reads its API key from the OPENAI_API_KEY env var — select \"shell env\" too, or export it from %s", keyPath)
+		}
 	}
 
 	fmt.Println()

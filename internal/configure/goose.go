@@ -74,35 +74,38 @@ func gooseProviderObject(e *Env) map[string]any {
 }
 
 // gooseProviderIsOurs reports whether an existing provider file was written
-// by the installer: it must carry our provider id and our model. Anything
-// else (a user-authored 2ba provider, a different model list) is user-owned
-// and left alone — the same rule the opencode upgrade path follows.
-func gooseProviderIsOurs(obj map[string]any, model string) bool {
+// by the installer: it must carry our provider id and our api_key_env. Both
+// are stable across --model and --api-base changes, so a rerun with a
+// different model still recognizes (and upgrades) our own file. Goose's own
+// UI flow never produces this combination — it names custom providers
+// custom_<slug> and generates its own key names — so anything else is
+// user-owned and left alone.
+func gooseProviderIsOurs(obj map[string]any) bool {
 	if name, _ := obj["name"].(string); name != gooseProviderID {
 		return false
 	}
-	models, _ := obj["models"].([]any)
-	for _, m := range models {
-		mm, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		if n, _ := mm["name"].(string); n == model {
-			return true
-		}
-	}
-	return false
+	key, _ := obj["api_key_env"].(string)
+	return key == "OPENAI_API_KEY"
 }
 
 // patchGooseProvider brings an installer-written provider file up to the
 // current declaration: installer-owned fields are updated in place (so
-// --api-base and --model changes take effect), unknown keys the user added
-// are preserved, nothing is removed. It reports whether the file changed.
-// Fields are compared in their marshaled form: json.Unmarshal yields
-// float64 for numbers, and a reloaded 262144 must equal a fresh int one.
+// --api-base and --model changes take effect), unknown top-level keys the
+// user added are preserved, nothing is removed. The models array is merged
+// per entry (mergeGooseModels) so user-added models and per-model keys
+// survive too. It reports whether the file changed. Fields are compared in
+// their marshaled form: json.Unmarshal yields float64 for numbers, and a
+// reloaded 262144 must equal a fresh int one.
 func patchGooseProvider(obj map[string]any, e *Env) bool {
 	changed := false
 	for k, v := range gooseProviderObject(e) {
+		if k == "models" {
+			if merged, modelsChanged := mergeGooseModels(obj[k], v); modelsChanged {
+				obj[k] = merged
+				changed = true
+			}
+			continue
+		}
 		got, _ := json.Marshal(obj[k])
 		want, _ := json.Marshal(v)
 		if string(got) != string(want) {
@@ -111,6 +114,56 @@ func patchGooseProvider(obj map[string]any, e *Env) bool {
 		}
 	}
 	return changed
+}
+
+// mergeGooseModels merges the installer's single-model declaration into an
+// existing models array without clobbering user data: our model entry is
+// created or its installer-owned subfields (context_limit, reasoning) are
+// refreshed in place, while other model entries the user added, extra
+// per-model keys, and entries left over from earlier --model values are
+// kept.
+func mergeGooseModels(existing, want any) (any, bool) {
+	wantEntries, _ := want.([]any)
+	if len(wantEntries) == 0 {
+		return existing, false
+	}
+	ours, _ := wantEntries[0].(map[string]any)
+	entries, ok := existing.([]any)
+	if !ok {
+		return want, true // absent or unexpected shape → our declaration
+	}
+	out := make([]any, 0, len(entries)+1)
+	changed := false
+	found := false
+	for _, ent := range entries {
+		em, ok := ent.(map[string]any)
+		if !ok {
+			out = append(out, ent) // opaque entry — keep verbatim
+			continue
+		}
+		if n, _ := em["name"].(string); n == ours["name"] {
+			found = true
+			for k, v := range ours {
+				got, _ := json.Marshal(em[k])
+				w, _ := json.Marshal(v)
+				if string(got) != string(w) {
+					em[k] = v
+					changed = true
+				}
+			}
+			out = append(out, em)
+			continue
+		}
+		out = append(out, ent)
+	}
+	if !found {
+		out = append(out, ours)
+		changed = true
+	}
+	if !changed {
+		return existing, false
+	}
+	return out, true
 }
 
 // mergeGooseProviderEntry adds the providers.2ba entry goose uses to resolve
@@ -195,7 +248,7 @@ func ConfigureGoose(e *Env) {
 		return
 	}
 	providerIsNew := !fileExists(provPath)
-	if !providerIsNew && !gooseProviderIsOurs(prov, e.Model) {
+	if !providerIsNew && !gooseProviderIsOurs(prov) {
 		e.notef("Goose — already configured")
 		return
 	}
@@ -270,15 +323,13 @@ func gooseConfigManaged(path string) bool {
 	return false
 }
 
-// removeGooseProviderFile deletes the installer's custom_providers/2ba.json.
-// A file naming another provider is left in place; a corrupt one returns an
-// error so the caller can warn and leave it untouched.
-func removeGooseProviderFile(path string) (bool, error) {
+// gooseProviderFileIsOurs reports whether the provider file at path is
+// installer-owned (same predicate as the configure path). A corrupt file
+// returns an error so the caller can warn and leave it untouched — the
+// uninstall never deletes a file it cannot classify.
+func gooseProviderFileIsOurs(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
 		return false, err
 	}
 	var obj map[string]any
@@ -288,10 +339,7 @@ func removeGooseProviderFile(path string) (bool, error) {
 	if obj == nil { // a bare "null" parses cleanly but is no provider config
 		return false, os.ErrInvalid
 	}
-	if name, _ := obj["name"].(string); name != gooseProviderID {
-		return false, nil
-	}
-	return true, os.Remove(path)
+	return gooseProviderIsOurs(obj), nil
 }
 
 // deleteKeyPreservingHeadComment removes key from parent like mapDelete,
