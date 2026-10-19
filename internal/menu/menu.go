@@ -28,7 +28,7 @@ var (
 // 2ba-code is a supported service (Selections.Twocode, --services 2ba-code)
 // but is intentionally not a row: it is not offered in the picker yet.
 var (
-	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude", "pi", "openclaw", "hermes"}
+	names = []string{"shell env", "opencode", "windsurf", "kimi", "continue", "cursor", "zcode", "claude", "pi", "openclaw", "hermes", "goose"}
 	descs = []string{
 		"OPENAI_API_KEY/BASE for aider & similar tools",
 		"OpenCode CLI (~/.config/opencode)",
@@ -41,17 +41,18 @@ var (
 		"Pi coding agent (~/.pi/agent)",
 		"OpenClaw CLI (~/.openclaw)",
 		"Hermes Agent (~/.hermes, in-place merge)",
+		"Goose agent (~/.config/goose, in-place merge)",
 	}
 )
 
 // Selections is the user's pick, in menu order.
 type Selections struct {
-	Shell, Opencode, Windsurf, Kimi, Continue, Cursor, Zcode, Twocode, Claude, Pi, Openclaw, Hermes bool
+	Shell, Opencode, Windsurf, Kimi, Continue, Cursor, Zcode, Twocode, Claude, Pi, Openclaw, Hermes, Goose bool
 }
 
 // Any reports whether at least one service is selected.
 func (s Selections) Any() bool {
-	return s.Shell || s.Opencode || s.Windsurf || s.Kimi || s.Continue || s.Cursor || s.Zcode || s.Twocode || s.Claude || s.Pi || s.Openclaw || s.Hermes
+	return s.Shell || s.Opencode || s.Windsurf || s.Kimi || s.Continue || s.Cursor || s.Zcode || s.Twocode || s.Claude || s.Pi || s.Openclaw || s.Hermes || s.Goose
 }
 
 // Result is what Run returns after the menu closes.
@@ -61,7 +62,7 @@ type Result struct {
 }
 
 type model struct {
-	sel      [11]bool
+	sel      [12]bool
 	cursor   int
 	quitting bool
 }
@@ -70,11 +71,11 @@ type model struct {
 // row (see names), so its detection pre-tick is dropped here.
 func New(initial detect.Services) model {
 	return model{
-		sel: [11]bool{
+		sel: [12]bool{
 			initial.Shell, initial.Opencode, initial.Windsurf,
 			initial.Kimi, initial.Continue, initial.Cursor,
 			initial.Zcode, initial.Claude, initial.Pi,
-			initial.Openclaw, initial.Hermes,
+			initial.Openclaw, initial.Hermes, initial.Goose,
 		},
 	}
 }
@@ -169,7 +170,7 @@ func Run(stdin io.Reader, stdout io.Writer) (Result, error) {
 			Shell: final.sel[0], Opencode: final.sel[1], Windsurf: final.sel[2],
 			Kimi: final.sel[3], Continue: final.sel[4], Cursor: final.sel[5],
 			Zcode: final.sel[6], Claude: final.sel[7], Pi: final.sel[8],
-			Openclaw: final.sel[9], Hermes: final.sel[10],
+			Openclaw: final.sel[9], Hermes: final.sel[10], Goose: final.sel[11],
 			// Twocode has no row in the menu yet; it is only ever selected
 			// through --services 2ba-code.
 		},

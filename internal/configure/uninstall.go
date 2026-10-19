@@ -89,8 +89,9 @@ func removeJSONEntry(path, key string) (bool, error) {
 
 // Uninstall removes everything the installer manages: the shell rc block, the
 // agent JSON entries, the 2ba-code custom-provider entry, the Claude Code
-// env block, the Kimi TOML blocks, the OpenClaw config block, and the key
-// file. Backups are kept as *.bak.2ba next to the modified files.
+// env block, the Kimi TOML blocks, the OpenClaw config block, the Goose
+// provider file and config entries, and the key file. Backups are kept as
+// *.bak.2ba next to the modified files.
 func Uninstall(e *Env) {
 	e.logf("removing 2ba.ai managed configuration…")
 
@@ -185,6 +186,49 @@ func Uninstall(e *Env) {
 				e.warnf("%s is not valid YAML — leaving it untouched", hc)
 			} else if removed {
 				e.logf("removed 2ba entry from %s", hc)
+			}
+		}
+	}
+
+	// Goose: the installer-written custom_providers/2ba.json plus the 2ba
+	// entries in config.yaml. Removal is gated on the same ownership
+	// predicate the configure path uses (name + api_key_env), so a
+	// user-authored 2ba.json — or an unclassifiable corrupt one — is left
+	// untouched, config.yaml included. Backups happen only immediately
+	// before a real write or removal.
+	gooseFileOurs := false
+	if gp := gooseProviderFile(); fileExists(gp) {
+		if e.DryRun {
+			e.logf("would remove the installer-owned 2ba provider from %s", gp)
+		} else {
+			ours, err := gooseProviderFileIsOurs(gp)
+			switch {
+			case err != nil:
+				e.warnf("%s is not valid JSON — leaving it untouched", gp)
+			case ours:
+				gooseFileOurs = true
+				e.backup(gp)
+				if err := os.Remove(gp); err != nil {
+					e.warnf("could not remove %s: %v", gp, err)
+				} else {
+					e.logf("removed 2ba provider file %s", gp)
+				}
+			}
+		}
+	} else {
+		// No provider file: any 2ba entries in config.yaml are leftovers
+		// from an install whose file was removed by hand — ours to clean.
+		gooseFileOurs = true
+	}
+	if gc := gooseConfigFile(); fileExists(gc) && gooseFileOurs {
+		if e.DryRun {
+			e.logf("would remove the 2ba entries from %s", gc)
+		} else if gooseConfigManaged(gc) {
+			e.backup(gc)
+			if removed, err := removeGooseConfig(gc); err != nil {
+				e.warnf("%s is not valid YAML — leaving it untouched", gc)
+			} else if removed {
+				e.logf("removed 2ba entries from %s", gc)
 			}
 		}
 	}

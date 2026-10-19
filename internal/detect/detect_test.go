@@ -29,10 +29,14 @@ func TestDetectDirs(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(home, ".pi", "agent"), 0o755)
 	_ = os.MkdirAll(filepath.Join(home, ".openclaw"), 0o755)
 	_ = os.MkdirAll(filepath.Join(home, ".hermes"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".config", "goose"), 0o755)
 
 	s := Detect()
-	if !s.Shell || !s.Opencode || !s.Windsurf || !s.Kimi || !s.Continue || !s.Cursor || !s.Zcode || !s.Twocode || !s.Claude || !s.Pi || !s.Openclaw || !s.Hermes {
+	if !s.Shell || !s.Opencode || !s.Windsurf || !s.Kimi || !s.Continue || !s.Cursor || !s.Zcode || !s.Twocode || !s.Claude || !s.Pi || !s.Openclaw || !s.Hermes || !s.Goose {
 		t.Errorf("expected all services detected, got %+v", s)
+	}
+	if !s.Has("goose") {
+		t.Errorf("Has(goose) = false, want true")
 	}
 	if s.ShellRC != filepath.Join(home, ".zshrc") {
 		t.Errorf("ShellRC = %q, want .zshrc", s.ShellRC)
