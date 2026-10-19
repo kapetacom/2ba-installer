@@ -2613,3 +2613,269 @@ func TestHermesIncompatibleModelShape(t *testing.T) {
 		t.Errorf("file was modified despite shape warning:\n%s", got)
 	}
 }
+
+// ------------------------------------------------------------------- goose
+
+func TestGooseAddCreatesProviderAndDefault(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "goose"))
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureGoose(env)
+
+	provPath := filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")
+	var prov map[string]any
+	pv, err := os.ReadFile(provPath)
+	if err != nil {
+		t.Fatalf("provider file missing:\n%s", buf.String())
+	}
+	if err := json.Unmarshal(pv, &prov); err != nil {
+		t.Fatalf("provider not valid JSON: %v", err)
+	}
+	if prov["name"] != "2ba" || prov["engine"] != "openai" || prov["base_url"] != testBase {
+		t.Errorf("provider identity fields wrong:\n%s", pv)
+	}
+	if prov["api_key_env"] != "OPENAI_API_KEY" {
+		t.Errorf("provider must read the exported OPENAI_API_KEY:\n%s", pv)
+	}
+	models, _ := prov["models"].([]any)
+	if len(models) != 1 {
+		t.Fatalf("want one model entry:\n%s", pv)
+	}
+	m := models[0].(map[string]any)
+	if m["name"] != "amber" || m["context_limit"] != float64(262144) || m["reasoning"] != true {
+		t.Errorf("model entry wrong:\n%s", pv)
+	}
+	if st, _ := os.Stat(provPath); st == nil || st.Mode().Perm() != 0o600 {
+		t.Errorf("provider perms wrong: %v", st)
+	}
+
+	var cfgDoc map[string]any
+	cy, err := os.ReadFile(filepath.Join(home, ".config", "goose", "config.yaml"))
+	if err != nil {
+		t.Fatalf("config.yaml missing:\n%s", buf.String())
+	}
+	if err := yaml.Unmarshal(cy, &cfgDoc); err != nil {
+		t.Fatalf("config not valid YAML: %v", err)
+	}
+	if cfgDoc["active_provider"] != "2ba" {
+		t.Errorf("active_provider = %v, want 2ba:\n%s", cfgDoc["active_provider"], cy)
+	}
+	entry := cfgDoc["providers"].(map[string]any)["2ba"].(map[string]any)
+	if entry["model"] != "amber" || entry["enabled"] != true || entry["configured"] != true {
+		t.Errorf("providers.2ba wrong (enabled/configured must be real booleans):\n%s", cy)
+	}
+	if !strings.Contains(buf.String(), "Goose: provider") {
+		t.Errorf("expected add notice:\n%s", buf.String())
+	}
+}
+
+// A user default (another active provider) and user comments must survive;
+// only the providers.2ba entry is added, the default is never stolen.
+func TestGoosePreservesUserDefault(t *testing.T) {
+	home := t.TempDir()
+	cfgPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	mustWrite(t, cfgPath, "# my goose config\nactive_provider: chatgpt_codex\nproviders:\n  chatgpt_codex:\n    enabled: true\n    model: gpt-6.1-sol\n    configured: true\n")
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	ConfigureGoose(env)
+
+	var doc map[string]any
+	cy, _ := os.ReadFile(cfgPath)
+	if err := yaml.Unmarshal(cy, &doc); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	if doc["active_provider"] != "chatgpt_codex" {
+		t.Errorf("user default stolen:\n%s", cy)
+	}
+	providers := doc["providers"].(map[string]any)
+	if _, ok := providers["2ba"].(map[string]any); !ok {
+		t.Errorf("providers.2ba missing:\n%s", cy)
+	}
+	if _, ok := providers["chatgpt_codex"]; !ok {
+		t.Errorf("user provider entry lost:\n%s", cy)
+	}
+	if !strings.Contains(string(cy), "# my goose config") {
+		t.Errorf("comment lost:\n%s", cy)
+	}
+}
+
+// A user-authored 2ba.json without our model is user-owned: untouched.
+func TestGooseUserProviderUntouched(t *testing.T) {
+	home := t.TempDir()
+	provPath := filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")
+	existing := `{"name": "2ba", "engine": "openai", "base_url": "https://elsewhere/v1", "models": [{"name": "other"}]}`
+	mustWrite(t, provPath, existing)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureGoose(env)
+
+	if got, _ := os.ReadFile(provPath); string(got) != existing {
+		t.Errorf("user provider was modified:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected leave-as-is notice:\n%s", buf.String())
+	}
+}
+
+// An installer-written provider file is upgraded in place: stale
+// installer-owned fields move to current values, user-added keys survive.
+func TestGooseUpgradeInPlace(t *testing.T) {
+	home := t.TempDir()
+	provPath := filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")
+	mustWrite(t, provPath, `{"name": "2ba", "engine": "openai", "display_name": "2ba.ai", "api_key_env": "OPENAI_API_KEY", "base_url": "https://old.example/v1", "models": [{"name": "amber", "context_limit": 131072}], "timeout_seconds": 5}`)
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureGoose(env)
+
+	var prov map[string]any
+	pv, _ := os.ReadFile(provPath)
+	if err := json.Unmarshal(pv, &prov); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	if prov["base_url"] != testBase {
+		t.Errorf("stale base_url not updated:\n%s", pv)
+	}
+	models := prov["models"].([]any)
+	if models[0].(map[string]any)["context_limit"] != float64(262144) {
+		t.Errorf("stale context_limit not updated:\n%s", pv)
+	}
+	if prov["timeout_seconds"] != float64(5) {
+		t.Errorf("user-added key lost:\n%s", pv)
+	}
+	if !strings.Contains(buf.String(), "Goose: provider") {
+		t.Errorf("expected upgrade notice:\n%s", buf.String())
+	}
+}
+
+func TestGooseIdempotent(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "goose"))
+	env, _ := newEnv(t, home, "amber", "k", false)
+	ConfigureGoose(env)
+
+	provPath := filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")
+	cfgPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	provBefore, _ := os.ReadFile(provPath)
+	cfgBefore, _ := os.ReadFile(cfgPath)
+
+	env2, buf := newEnv(t, home, "amber", "k", false)
+	ConfigureGoose(env2)
+
+	provAfter, _ := os.ReadFile(provPath)
+	cfgAfter, _ := os.ReadFile(cfgPath)
+	if string(provBefore) != string(provAfter) || string(cfgBefore) != string(cfgAfter) {
+		t.Errorf("re-run rewrote stable files")
+	}
+	if !strings.Contains(buf.String(), "already configured") {
+		t.Errorf("expected already-configured notice:\n%s", buf.String())
+	}
+}
+
+func TestGooseMalformedFiles(t *testing.T) {
+	home := t.TempDir()
+	provPath := filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")
+	cfgPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	mustWrite(t, provPath, "{not json")
+	mustWrite(t, cfgPath, "active_provider: [unclosed\n")
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureGoose(env)
+
+	if got, _ := os.ReadFile(provPath); string(got) != "{not json" {
+		t.Errorf("malformed provider rewritten:\n%s", got)
+	}
+	if !strings.Contains(buf.String(), "not valid JSON") {
+		t.Errorf("expected JSON warning:\n%s", buf.String())
+	}
+}
+
+func TestGooseDryRun(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".config", "goose"))
+	env, buf := newEnv(t, home, "amber", "k", true)
+
+	ConfigureGoose(env)
+
+	if _, err := os.Stat(filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")); !os.IsNotExist(err) {
+		t.Errorf("dry run wrote the provider file")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "goose", "config.yaml")); !os.IsNotExist(err) {
+		t.Errorf("dry run wrote config.yaml")
+	}
+	if !strings.Contains(buf.String(), "would add or update") {
+		t.Errorf("expected dry-run notice:\n%s", buf.String())
+	}
+}
+
+func TestGooseNotDetected(t *testing.T) {
+	home := t.TempDir()
+	// goose exists on dev machines; empty PATH makes the check hermetic.
+	t.Setenv("PATH", filepath.Join(home, "empty-bin"))
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	ConfigureGoose(env)
+
+	if !strings.Contains(buf.String(), "Goose not detected") {
+		t.Errorf("expected not-detected warning:\n%s", buf.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "goose")); !os.IsNotExist(err) {
+		t.Errorf("not-detected run created the goose dir")
+	}
+}
+
+func TestUninstallGoose(t *testing.T) {
+	home := t.TempDir()
+	provPath := filepath.Join(home, ".config", "goose", "custom_providers", "2ba.json")
+	cfgPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	mustWrite(t, provPath, `{"name": "2ba", "engine": "openai", "base_url": "`+testBase+`", "models": [{"name": "amber"}]}`)
+	mustWrite(t, cfgPath, "# my config\nactive_provider: 2ba\nproviders:\n  2ba:\n    enabled: true\n    model: amber\n    configured: true\n  chatgpt_codex:\n    enabled: true\n    model: gpt-6.1-sol\n    configured: true\n")
+	env, buf := newEnv(t, home, "amber", "k", false)
+
+	Uninstall(env)
+
+	if _, err := os.Stat(provPath); !os.IsNotExist(err) {
+		t.Errorf("provider file not removed")
+	}
+	var doc map[string]any
+	cy, _ := os.ReadFile(cfgPath)
+	if err := yaml.Unmarshal(cy, &doc); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	providers := doc["providers"].(map[string]any)
+	if _, ok := providers["2ba"]; ok {
+		t.Errorf("providers.2ba not removed:\n%s", cy)
+	}
+	if _, ok := providers["chatgpt_codex"]; !ok {
+		t.Errorf("user provider entry lost:\n%s", cy)
+	}
+	if _, still := doc["active_provider"]; still {
+		t.Errorf("2ba default not removed:\n%s", cy)
+	}
+	if !strings.Contains(string(cy), "# my config") {
+		t.Errorf("comment lost:\n%s", cy)
+	}
+	if !strings.Contains(buf.String(), "removed 2ba") {
+		t.Errorf("expected removal notices:\n%s", buf.String())
+	}
+}
+
+// A user default pointing elsewhere survives uninstall: only 2ba-owned
+// entries are removed.
+func TestUninstallGooseKeepsUserDefault(t *testing.T) {
+	home := t.TempDir()
+	cfgPath := filepath.Join(home, ".config", "goose", "config.yaml")
+	mustWrite(t, cfgPath, "active_provider: chatgpt_codex\nproviders:\n  chatgpt_codex:\n    enabled: true\n    model: gpt-6.1-sol\n")
+	env, _ := newEnv(t, home, "amber", "k", false)
+
+	Uninstall(env)
+
+	var doc map[string]any
+	cy, _ := os.ReadFile(cfgPath)
+	if err := yaml.Unmarshal(cy, &doc); err != nil {
+		t.Fatalf("not valid YAML: %v", err)
+	}
+	if doc["active_provider"] != "chatgpt_codex" {
+		t.Errorf("user default lost:\n%s", cy)
+	}
+}

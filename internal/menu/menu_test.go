@@ -49,10 +49,11 @@ func TestToggleByNumber(t *testing.T) {
 		t.Error("9 should toggle pi on")
 	}
 	// 2ba-code is not a menu row; key 0 (now bound to row 9 = openclaw)
-	// toggles openclaw, not a no-op. Hermes is row 10 (index 10) and has
-	// no single-digit binding; the user reaches it with the arrow keys.
+	// toggles openclaw, not a no-op. Hermes (row 10) and goose (row 11)
+	// have no single-digit binding; the user reaches them with the arrow
+	// keys.
 	m = update(m, keyRunes("0"))
-	want := []bool{false, false, true, false, false, false, true, true, true, true, false}
+	want := []bool{false, false, true, false, false, false, true, true, true, true, false, false}
 	for i := range m.sel {
 		if m.sel[i] != want[i] {
 			t.Errorf("0 should toggle openclaw; sel = %v, want %v", m.sel, want)
@@ -69,6 +70,12 @@ func TestToggleByNumber(t *testing.T) {
 	m = update(m, keyType(tea.KeySpace))
 	if !m.sel[10] {
 		t.Errorf("space should toggle the hermes row; sel = %v", m.sel)
+	}
+	// one more down reaches the goose row
+	m = update(m, keyType(tea.KeyDown))
+	m = update(m, keyType(tea.KeySpace))
+	if !m.sel[11] {
+		t.Errorf("space should toggle the goose row; sel = %v", m.sel)
 	}
 }
 
